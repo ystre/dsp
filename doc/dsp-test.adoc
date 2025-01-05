@@ -1,0 +1,88 @@
+= Test Guide
+
+The following scripts are provided for testing:
+* `scripts/test.sh` for compilation and unit testing.
+* `scripts/ft.sh` for functional testing.
+
+= Test Specification
+
+== Runtime Framework
+
+=== Functional Test Cases
+
+* Daemon's signal handling
+* Identity test: equality testing on southbound and northbound interface
+
+=== Performance
+
+* Start-up time
+* End-to-end latency
+* Shutdown time / Restart time
+* Number of threads
+
+== TCP Server
+
+=== Functional Test Cases
+
+* Establishing one connection
+** Disconnecting without any data
+** Sending data
+*** Processing everything
+*** Processing in chunks
+*** Waiting for more data
+* Simultaneous connections
+** Not blocking each other
+** Separate state for each connections
+
+=== Performance
+
+==== Scenarios
+
+* One connection
+** Different packet sizes (S, M, L)
+* Multiple connections
+** Scalability (total throughput / connection throughput)
+** Upper bound
+
+==== Reports
+
+===== Baseline performance
+
+Command: `scripts/ft.sh`
+
+Input data: 20 million 200-byte messages
+
+Results as measured by the code. `handler_frame` class provides a
+`perf_summary()` function that reports a summary when the connection is closed
+(in case of EOF).
+
+ Summary: 432.332 MBps and 2222k MPS over 9.0 seconds (total: 4080000000 bytes, 20000000 messages)
+
+Hardware:
+
+----
+Architecture:             x86_64
+  CPU op-mode(s):         32-bit, 64-bit
+  Address sizes:          39 bits physical, 48 bits virtual
+  Byte Order:             Little Endian
+CPU(s):                   8
+Vendor ID:                GenuineIntel
+  Model name:             11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
+    CPU family:           6
+    Model:                140
+    Thread(s) per core:   2
+    Core(s) per socket:   4
+    Socket(s):            1
+    Stepping:             1
+    CPU max MHz:          4700.0000
+    CPU min MHz:          400.0000
+Caches (sum of all):
+  L1d:                    192 KiB (4 instances)
+  L1i:                    128 KiB (4 instances)
+  L2:                     5 MiB (4 instances)
+  L3:                     12 MiB (1 instance)
+----
+
+== Kafka Producer
+
+NOTE: stub section

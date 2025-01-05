@@ -1,0 +1,39 @@
+= Environment setup
+
+NOTE: All commands assume the root of the project as working directory.
+
+The purpose is to provide an enviroment for various runtime testing.
+
+== Docker
+
+The following command creates Docker containers for the necessary dependencies.
+
+// CMD: setup
+[source,bash]
+----
+docker compose -f ./env/dsp/docker-compose.yml up -d
+----
+
+The scrape target of the Prometheus server for DSP is on port 9555.
+
+Kafka can be rate limited via the following command (empty string resets the
+property to its default value). Resources are set to 1 CPU and 4GB memory.
+
+// CMD: kafka-rate-limit
+[source,bash]
+----
+docker exec -it redpanda-0 rpk cluster config set kafka_throughput_limit_node_in_bps=""
+----
+
+== Kubernetes
+
+_Coming Soon_
+
+== Metrics
+
+The following dashboard is a good starting place to monitor the system
+enviroment during performance testing.
+
+https://grafana.com/grafana/dashboards/1860-node-exporter-full/
+
+DSP dashboard is saved in `res/grafana-dashboard-dsp.json`.

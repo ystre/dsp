@@ -1,0 +1,166 @@
+:root: ..
+:dsp-headers: ../include/dsp
+
+= User Guide
+:toc:
+
+== Purpose
+
+Data Stream Processing (DSP) is an SDK containing a runtime framework for
+various services, from bare-metal to cloud services.
+
+In a nutshell, it provides a southbound interface with possibly multiple
+northbound interfaces.
+
+== Interfaces
+
+* Southbound:
+** TCP server (PoC)
+** UDP server
+** Kafka consumer
+* Northbound
+** TCP client (PoC)
+** Kafka producer (PoC)
+** File
+** Stdout/stderr
+* Observability interfaces
+** Logging (PoC)
+** Metrics (Under design)
+** Alarms (No current plan)
+
+=== Northbound Interfaces
+
+Northbound interfaces use a `message` type which has the following format.
+
+NOTE: TODO: values should be byte arrays
+
+[cols="1,1,3"]
+|===
+| Field | Type | Description
+
+| Key
+| Byte array
+| Key of the message.
+
+| Subject
+| String
+| A title, topic of the message. It can be used to route the message.
+
+| Headers
+| Key:String, Value:String
+| Arbitratry data categorizing, labelling the message.
+
+| Payload
+| Byte array
+| Arbitratry content of the message
+|===
+
+[source,cpp]
+----
+include::{dsp-headers}/cache.hh[tag=message]
+----
+
+Primary use-case is Kafka currently, the format might change in the future.
+
+==== Kafka Producer Client
+
+NOTE: stub section
+
+=== Southbound Interfaces
+
+Southbound interfaces use __Handlers__. They define what and how to process.
+
+Handlers are created by factories. For example, each TCP connection creates its
+own handler via the factory.
+
+==== TCP Server
+
+TCP connection handlers must adhere to the following interface.
+
+[source,cpp]
+----
+include::{dsp-headers}/tcp_handler.hh[tag=tcp-handler]
+----
+
+`connection_info` contains information like IP address and port.
+
+It ensures that no exception can escape the TCP server. All uncaught exceptions
+in the handler are sent back for error handling or ignoring.
+
+A lightweight frame is provided for TCP handlers - `dsp::handler_frame` -,
+which contains some boilerplate code, like logging and metrics. On connection
+close the TCP server calls into the first overload of `on_error()`.
+
+This handler frame must be inherited from via CRTP and the following functions
+must be defined and a factory also needs to be defined.
+
+[source,cpp]
+----
+class handler : public dsp::handler_frame<handler> {
+public:
+    auto do_process(nova::data_view) -> std::size_t;
+    void do_eof();
+};
+
+class factory : public dsp::tcp::handler_factory {
+public:
+    factory(std::shared_ptr<dsp::cache> cache);
+    auto create() -> std::unique_ptr<dsp::tcp::handler> override;
+};
+----
+
+NOTE: TODO: example code in the library
+
+== Supporting Library
+
+=== Daemon
+
+There is a __Daemon__ running on the main thread which makes sure that the main
+thread does not fall off at the end of the code. `daemon::start()` must be
+called to ensure that the background threads are not automatically joined.
+
+This provides a safe OS signal handling. The following signals are recognized:
+
+* SIGINT
+* SIGTERM
+* SIGUSR1
+* SIGUSR2
+
+The first two are stop signals, meaning the Daemon will stop.
+
+Receiving SIGINT twice calls immediately into `std::abort`, which is a
+**non-graceful** shutdown. It ensures that the program can be killed
+with keyboard interrupt.
+
+CAUTION: All __tasks__ on worker threads must make sure that upon joining the
+thread, the destructor stops all threads. Stopping tasks is the responsibility
+of the __Service__.
+
+== Handlers
+
+All handlers must contain a `dsp::cache`, that is the proxy between southbound
+and northbound interfaces.
+
+== Cache
+
+The current implementation of `dsp::cache` is a simple proxy, it does not
+actually hold any data. It just calls into all attached northbound interfaces.
+
+NOTE: Design Goal - Mutlithreading, tasks, synchronization
+
+== Runtime Framework
+
+The __Service__ integrates the various components into a usable unit. It can be
+constructed with a (YAML) configuration.
+
+TCP server is provided by the service out of the box which is available through
+`interfaces.southbound.type = "tcp"` configuration. The only configurable
+parameter of the TCP server is the port. It is accepting connections from all
+IP addresses.
+
+=== Configuration
+
+[source,yaml]
+----
+include::{root}/res/dsp.yaml[]
+----

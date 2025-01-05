@@ -1,0 +1,4 @@
+cmake:
+  definitions:
+    - CMAKE_PROJECT_TOP_LEVEL_INCLUDES=./conan_provider.cmake
+    - BUILD_TESTS=ON

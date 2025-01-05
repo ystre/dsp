@@ -1,0 +1,31 @@
+app:
+  topic: dev-test
+  handler: telemetry
+
+dsp:
+  daemon-interval: 1
+  interfaces:
+    southbound:
+      type: tcp
+      port: 7200
+    northbound:
+      enabled: false
+      name: main-nb
+      type: kafka
+      address: localhost:19092
+      # - name: main-nb
+        # type: kafka
+        # address: kafka:9092
+    metrics:
+      enabled: true
+      port: 9555
+  router:
+    - name: hb
+      priority: 1
+      condition:
+        field: type
+        value: heartbeat
+        matcher: exact
+      action: include
+      destination: main-nb
+      subject: heartbeats
