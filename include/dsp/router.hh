@@ -15,7 +15,7 @@
 namespace dsp {
 
 class router {
-    static constexpr auto Everything = std::make_pair("*", "*");
+    static const std::pair<std::string, std::string> Everything;
 
     enum class match_type {
         exact,
@@ -112,5 +112,7 @@ private:
         return rule.action == action_type::deny;
     }
 };
+
+inline const std::pair<std::string, std::string> router::Everything = std::make_pair(std::string{ "*" }, std::string{ "*" });
 
 } // namespace dsp

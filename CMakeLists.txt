@@ -8,7 +8,7 @@ message(STATUS "DSP version ${DSP_VERSION}")
 
 option(BUILD_TESTS "Build tests" ON)
 option(RUNTIME_ASSERTIONS "Enable asserts in release build" OFF)
-option(NOVA_EXPERIMENTAL_FEATURE_SET "Experimental Nova" ON)
+option(NOVA_EXPERIMENTAL_FEATURE_SET "Experimental Nova" OFF)
 option(LTO "Link Time Optimization" FALSE)
 
 if(RUNTIME_ASSERTIONS)

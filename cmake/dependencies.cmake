@@ -1,11 +1,10 @@
-find_package(Boost)
-find_package(fmt)
-find_package(range-v3)
+find_package(Boost REQUIRED)
+find_package(fmt REQUIRED)
 
-find_package(prometheus-cpp)
-find_package(RdKafka)
+find_package(prometheus-cpp REQUIRED)
+find_package(RdKafka REQUIRED)
 
 # Nova
-find_package(spdlog)
-find_package(nlohmann_json)
-find_package(yaml-cpp)
+find_package(spdlog REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(yaml-cpp REQUIRED)
