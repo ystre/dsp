@@ -11,10 +11,23 @@ The following command creates Docker containers for the necessary dependencies.
 // CMD: setup
 [source,bash]
 ----
-docker compose -f ./env/dsp/docker-compose.yml up -d
+docker compose -f ./env/docker-compose.yml up -d
 ----
 
-The scrape target of the Prometheus server for DSP is on port 9555.
+=== Important ports
+
+[cols="2,1"]
+|===
+| Name | Port
+| Grafana | 3000
+| Prometheus Server | 9090
+| DSP Southbound | 7200
+| DSP Prometheus Scrape | 9555
+| RedPanda Console | 8080
+| RedPanda Kafka API | 19092
+|===
+
+=== Resources
 
 Kafka can be rate limited via the following command (empty string resets the
 property to its default value). Resources are set to 1 CPU and 4GB memory.
