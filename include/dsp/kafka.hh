@@ -29,6 +29,8 @@ using cfg_props = std::map<std::string, std::string>;
 using delivery_callback_f = std::function<void(RdKafka::Message&)>;
 using event_callback_f = std::function<void(RdKafka::Event&)>;
 
+using kafka_record = std::unique_ptr<RdKafka::Message>;
+
 namespace detail {
 
     /**
@@ -169,9 +171,19 @@ namespace detail {
 class properties {
 public:
     static constexpr auto BootstrapServers = "bootstrap.servers";
+    static constexpr auto GroupId = "group.id";
 
     void bootstrap_server(const std::string& value) {
         m_cfg[BootstrapServers] = value;
+    }
+
+    /**
+     * @brief   Group ID for ...
+     *
+     * Consumer only property.
+     */
+    void group_id(const std::string& value) {
+        m_cfg[GroupId] = value;
     }
 
     void delivery_callback(std::unique_ptr<RdKafka::DeliveryReportCb> callback) {
@@ -440,6 +452,68 @@ private:
             nullptr
         );
     }
+
+};
+
+class consumer {
+public:
+    consumer(properties props)
+        : m_props(std::move(props))
+    {
+        auto config = m_props.create();
+
+        std::string errstr;
+        m_consumer = std::unique_ptr<RdKafka::KafkaConsumer>(RdKafka::KafkaConsumer::create(config.get(), errstr));
+
+        if (m_consumer == nullptr) {
+            throw std::runtime_error("Failed to create consumer: " + errstr);
+        }
+    }
+
+    consumer(const consumer&)               = delete;
+    consumer(consumer&&)                    = delete;
+    consumer& operator=(const consumer&)    = delete;
+    consumer& operator=(consumer&&)         = delete;
+
+    ~consumer() = default;
+
+    void subscribe(const std::vector<std::string>& topics) {
+        RdKafka::ErrorCode err = m_consumer->subscribe(topics);
+        if (err) {
+            throw nova::exception("Failed to subscribe to {} ({})", topics, RdKafka::err2str(err));
+        }
+    }
+
+    void subscribe(const std::string& topic) {
+        m_consumer->subscribe({ topic });
+    }
+
+    auto consume(std::size_t batch_size = 1, std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) -> std::vector<kafka_record> {
+        auto msgs = std::vector<kafka_record>();
+        msgs.reserve(batch_size);
+
+        for (std::size_t i = 0; i < batch_size; ++i) {
+            auto msg = kafka_record(m_consumer->consume(static_cast<int>(timeout.count())));
+
+            nova_assert(msg != nullptr);
+            switch (msg->err()) {
+                case RdKafka::ERR_NO_ERROR:
+                    msgs.push_back(std::move(msg));
+                    break;
+                case RdKafka::ERR__TIMED_OUT:
+                    return msgs;
+                default:
+                    nova::topic_log::error("kafka", "Consumer error: {}", msg->errstr());
+                    return msgs;
+            }
+        }
+
+        return msgs;
+    }
+
+private:
+    properties m_props;
+    std::unique_ptr<RdKafka::KafkaConsumer> m_consumer { nullptr };
 
 };
 
