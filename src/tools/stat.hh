@@ -25,7 +25,15 @@ class statistics {
     static constexpr auto RefreshInterval = std::chrono::seconds{ 1 };
 
 public:
-    void observe(std::size_t size, std::size_t n = 1) {
+
+    /**
+     * @brief   Increment and refresh numbers.
+     *
+     * System information is updated in one second intervals.
+     *
+     * Return true if the interval has passed. Use it to decide periodical logging for example.
+     */
+    auto observe(std::size_t size, std::size_t n = 1) -> bool {
         m_total_messages += n;
         m_total_bytes += size;
 
@@ -43,16 +51,20 @@ public:
 
             m_messages_prev = m_total_messages;
             m_bytes_prev = m_total_bytes;
+
+            return true;
         }
+
+        return false;
     }
 
-    auto to_string() -> std::string {
+    auto to_string() const -> std::string {
         return fmt::format(
             "{:.2f} MBps  "
             "{:.2f}k MPS "
             "  "
             "CPU: {:>5.1f}%  "
-            "RSS: {:.1} MB",
+            "RSS: {:.1f} MB",
             m_bps / nova::units::constants::MByte / 8,
             m_mps / nova::units::constants::kilo,
             m_sys_stats.cpu,

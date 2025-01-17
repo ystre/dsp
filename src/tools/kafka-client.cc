@@ -30,6 +30,41 @@
 namespace po = boost::program_options;
 using namespace std::literals;
 
+struct metrics {
+    std::size_t n_sent_messages;
+    std::size_t n_drop_messages;
+};
+
+// class delivery_handler {
+// public:
+    // void operator()([[maybe_unused]] rd_kafka_t* client, const rd_kafka_message_t* message, [[maybe_unused]] void* opaque) {
+        // if (message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+            // ++m_metrics.n_drop_messages;
+        // } else {
+            // ++m_metrics.n_sent_messages;
+        // }
+    // }
+
+    // [[nodiscard]] auto metrics() const -> const metrics& {
+        // return m_metrics;
+    // }
+
+// private:
+    // struct metrics m_metrics {};
+
+// };
+
+metrics g_metrics {};
+
+void dr_callback([[maybe_unused]] rd_kafka_t* client, const rd_kafka_message_t* message, [[maybe_unused]] void* opaque) {
+    if (message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+        ++g_metrics.n_drop_messages;
+    } else {
+        ++g_metrics.n_sent_messages;
+    }
+}
+
+
 auto produce(const po::variables_map& args) {
     const auto broker = args["broker"].as<std::string>();
     const auto topic = args["topic"].as<std::string>();
@@ -41,6 +76,7 @@ auto produce(const po::variables_map& args) {
 
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
+    cfg.delivery_callback(dr_callback);
 
     auto producer = dsp::kf::producer{ std::move(cfg) };
 
@@ -53,15 +89,20 @@ auto produce(const po::variables_map& args) {
 
     auto stat = statistics{ };
 
-    for (int i = 0; i < count; ++i) {
-        producer.send(message);
-        stat.observe(message.payload.size());       // TODO: full message size, potentially from delivery handler
-        nova::topic_log::info("{}", stat.to_string());
-    }
+    producer.topic(topic);
 
-    spinner.set_prefix("Finished");
-    spinner.finish();
-    producer.flush();
+    for (int i = 0; i < count; ++i) {
+        producer.try_send(message);
+        if (stat.observe(message.payload.size())) {     // TODO: full message size, potentially from delivery handler
+            nova::topic_log::info(
+                "kafka",
+                "Messages sent {} (dropped: {}) -- {}",
+                g_metrics.n_sent_messages,
+                g_metrics.n_drop_messages,
+                stat.to_string()
+            );
+        }
+    }
 }
 
 auto consume(const po::variables_map& args) {
@@ -70,7 +111,7 @@ auto consume(const po::variables_map& args) {
     const auto topic = args["topic"].as<std::string>();
     const auto batch_size = args["batch-size"].as<std::size_t>();
 
-    auto cfg = dsp::kf::properties{};
+    auto cfg = dsp::kf_rdcpp::properties{};
     cfg.bootstrap_server(broker);
     cfg.group_id(group_id);
     cfg.offset_earliest();
@@ -80,7 +121,7 @@ auto consume(const po::variables_map& args) {
 
     auto stat = statistics{ };
 
-    auto consumer = dsp::kf::consumer{ std::move(cfg) };
+    auto consumer = dsp::kf_rdcpp::consumer{ std::move(cfg) };
     consumer.subscribe(topic);
 
     while (g_sigint == 0) {

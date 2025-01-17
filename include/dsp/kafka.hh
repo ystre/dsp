@@ -495,12 +495,6 @@ public:
         std::string errstr;
         m_consumer = std::unique_ptr<RdKafka::KafkaConsumer>(RdKafka::KafkaConsumer::create(config.get(), errstr));
 
-        char errstr2[512];
-        if (!(rk = rd_kafka_new(RD_KAFKA_CONSUMER, config.c_ptr_global(), errstr2,
-                                sizeof(errstr2)))) {
-            throw std::runtime_error("Failed to create consumer: " + errstr);
-        }
-
         if (m_consumer == nullptr) {
             throw std::runtime_error("Failed to create consumer: " + errstr);
         }
