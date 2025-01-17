@@ -59,6 +59,8 @@ auto produce(const po::variables_map& args) {
         nova::topic_log::info("{}", stat.to_string());
     }
 
+    spinner.set_prefix("Finished");
+    spinner.finish();
     producer.flush();
 }
 

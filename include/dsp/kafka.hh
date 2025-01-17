@@ -9,6 +9,7 @@
 #include "dsp/cache.hh"
 #include "dsp/metrics.hh"
 
+#include <concepts>
 #include <nova/log.hh>
 
 #include <fmt/chrono.h>
@@ -29,6 +30,8 @@ using cfg_props = std::map<std::string, std::string>;
 using delivery_callback_f = std::function<void(RdKafka::Message&)>;
 using event_callback_f = std::function<void(RdKafka::Event&)>;
 
+using kafka_record = std::unique_ptr<RdKafka::Message>;
+
 namespace detail {
 
     /**
@@ -37,6 +40,8 @@ namespace detail {
      * Contains a default implementation.
      *
      * TODO(metrics): Maybe from stat callback?
+     *
+     * Note: first design iteration.
      */
     class delivery_callback : public RdKafka::DeliveryReportCb {
         struct cb_impl {
@@ -116,7 +121,7 @@ namespace detail {
             }
 
             virtual void handle_stats(const RdKafka::Event& event) {
-                nova::topic_log::debug("kafka", "Received stats: {}", event.str().size());
+                nova::topic_log::trace("kafka", "Received stats: {}", event.str().size());
             }
 
             virtual void handle_error(const RdKafka::Event& event) {
@@ -164,14 +169,46 @@ namespace detail {
 /**
  * @brief   A factory-like class to create the configuration.
  *
- * Dual-API
+ * Dual-API:
+ * - "famous" properties are exposed via named functions,
+ * - otherwise `set(key, value)` can be used.
+ *
+ * It holds both producer and consumer properties; not all of them applies to both.
  */
 class properties {
 public:
     static constexpr auto BootstrapServers = "bootstrap.servers";
+    static constexpr auto GroupId = "group.id";
+    static constexpr auto OffsetReset = "auto.offset.reset";
+
+    /**
+     * @brief   Set an arbitrary property.
+     */
+    template <typename T>
+        requires std::move_constructible<T>
+    void set(const std::string& key, T value) {
+        m_cfg[key] = std::move(value);
+    }
 
     void bootstrap_server(const std::string& value) {
         m_cfg[BootstrapServers] = value;
+    }
+
+    /**
+     * @brief   Consumer Group ID.
+     *
+     * https://developer.confluent.io/faq/apache-kafka/kafka-clients/#kafka-clients-what-is-groupid-in-kafka
+     */
+    void group_id(const std::string& value) {
+        m_cfg[GroupId] = value;
+    }
+
+    void offset_earliest() {
+        m_cfg[OffsetReset] = "earliest";
+    }
+
+    void offset_latest() {
+        m_cfg[OffsetReset] = "latest";
     }
 
     void delivery_callback(std::unique_ptr<RdKafka::DeliveryReportCb> callback) {
@@ -182,6 +219,11 @@ public:
         m_event_cb = std::move(callback);
     }
 
+    /**
+     * @brief   Create an rdkafka configuration object.
+     *
+     * Intended to be used by Kafka clients implemented in DSP.
+     */
     auto create() -> std::unique_ptr<RdKafka::Conf> {
         auto config = std::unique_ptr<RdKafka::Conf>(
             RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL)
@@ -440,6 +482,74 @@ private:
             nullptr
         );
     }
+
+};
+
+class consumer {
+public:
+    consumer(properties props)
+        : m_props(std::move(props))
+    {
+        auto config = m_props.create();
+
+        std::string errstr;
+        m_consumer = std::unique_ptr<RdKafka::KafkaConsumer>(RdKafka::KafkaConsumer::create(config.get(), errstr));
+
+        char errstr2[512];
+        if (!(rk = rd_kafka_new(RD_KAFKA_CONSUMER, config.c_ptr_global(), errstr2,
+                                sizeof(errstr2)))) {
+            throw std::runtime_error("Failed to create consumer: " + errstr);
+        }
+
+        if (m_consumer == nullptr) {
+            throw std::runtime_error("Failed to create consumer: " + errstr);
+        }
+    }
+
+    consumer(const consumer&)               = delete;
+    consumer(consumer&&)                    = delete;
+    consumer& operator=(const consumer&)    = delete;
+    consumer& operator=(consumer&&)         = delete;
+
+    ~consumer() = default;
+
+    void subscribe(const std::vector<std::string>& topics) {
+        RdKafka::ErrorCode err = m_consumer->subscribe(topics);
+        if (err) {
+            throw nova::exception("Failed to subscribe to {} ({})", topics, RdKafka::err2str(err));
+        }
+    }
+
+    void subscribe(const std::string& topic) {
+        m_consumer->subscribe({ topic });
+    }
+
+    auto consume(std::size_t batch_size = 1, std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) -> std::vector<kafka_record> {
+        auto msgs = std::vector<kafka_record>();
+        msgs.reserve(batch_size);
+
+        for (std::size_t i = 0; i < batch_size; ++i) {
+            auto msg = kafka_record(m_consumer->consume(static_cast<int>(timeout.count())));
+
+            nova_assert(msg != nullptr);
+            switch (msg->err()) {
+                case RdKafka::ERR_NO_ERROR:
+                    msgs.push_back(std::move(msg));
+                    break;
+                case RdKafka::ERR__TIMED_OUT:
+                    return msgs;
+                default:
+                    nova::topic_log::error("kafka", "Consumer error: {}", msg->errstr());
+                    return msgs;
+            }
+        }
+
+        return msgs;
+    }
+
+private:
+    properties m_props;
+    std::unique_ptr<RdKafka::KafkaConsumer> m_consumer { nullptr };
 
 };
 
