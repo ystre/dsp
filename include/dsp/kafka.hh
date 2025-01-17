@@ -9,6 +9,7 @@
 #include "dsp/cache.hh"
 #include "dsp/metrics.hh"
 
+#include <concepts>
 #include <nova/log.hh>
 
 #include <fmt/chrono.h>
@@ -39,6 +40,8 @@ namespace detail {
      * Contains a default implementation.
      *
      * TODO(metrics): Maybe from stat callback?
+     *
+     * Note: first design iteration.
      */
     class delivery_callback : public RdKafka::DeliveryReportCb {
         struct cb_impl {
@@ -118,7 +121,7 @@ namespace detail {
             }
 
             virtual void handle_stats(const RdKafka::Event& event) {
-                nova::topic_log::debug("kafka", "Received stats: {}", event.str().size());
+                nova::topic_log::trace("kafka", "Received stats: {}", event.str().size());
             }
 
             virtual void handle_error(const RdKafka::Event& event) {
@@ -166,24 +169,46 @@ namespace detail {
 /**
  * @brief   A factory-like class to create the configuration.
  *
- * Dual-API
+ * Dual-API:
+ * - "famous" properties are exposed via named functions,
+ * - otherwise `set(key, value)` can be used.
+ *
+ * It holds both producer and consumer properties; not all of them applies to both.
  */
 class properties {
 public:
     static constexpr auto BootstrapServers = "bootstrap.servers";
     static constexpr auto GroupId = "group.id";
+    static constexpr auto OffsetReset = "auto.offset.reset";
+
+    /**
+     * @brief   Set an arbitrary property.
+     */
+    template <typename T>
+        requires std::move_constructible<T>
+    void set(const std::string& key, T value) {
+        m_cfg[key] = std::move(value);
+    }
 
     void bootstrap_server(const std::string& value) {
         m_cfg[BootstrapServers] = value;
     }
 
     /**
-     * @brief   Group ID for ...
+     * @brief   Consumer Group ID.
      *
-     * Consumer only property.
+     * https://developer.confluent.io/faq/apache-kafka/kafka-clients/#kafka-clients-what-is-groupid-in-kafka
      */
     void group_id(const std::string& value) {
         m_cfg[GroupId] = value;
+    }
+
+    void offset_earliest() {
+        m_cfg[OffsetReset] = "earliest";
+    }
+
+    void offset_latest() {
+        m_cfg[OffsetReset] = "latest";
     }
 
     void delivery_callback(std::unique_ptr<RdKafka::DeliveryReportCb> callback) {
@@ -194,6 +219,11 @@ public:
         m_event_cb = std::move(callback);
     }
 
+    /**
+     * @brief   Create an rdkafka configuration object.
+     *
+     * Intended to be used by Kafka clients implemented in DSP.
+     */
     auto create() -> std::unique_ptr<RdKafka::Conf> {
         auto config = std::unique_ptr<RdKafka::Conf>(
             RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL)
@@ -464,6 +494,12 @@ public:
 
         std::string errstr;
         m_consumer = std::unique_ptr<RdKafka::KafkaConsumer>(RdKafka::KafkaConsumer::create(config.get(), errstr));
+
+        char errstr2[512];
+        if (!(rk = rd_kafka_new(RD_KAFKA_CONSUMER, config.c_ptr_global(), errstr2,
+                                sizeof(errstr2)))) {
+            throw std::runtime_error("Failed to create consumer: " + errstr);
+        }
 
         if (m_consumer == nullptr) {
             throw std::runtime_error("Failed to create consumer: " + errstr);

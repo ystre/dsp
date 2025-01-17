@@ -77,6 +77,7 @@ auto consume(const po::variables_map& args) {
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
     cfg.group_id(group_id);
+    cfg.offset_earliest();
 
     auto spinner = dsp::spinner{ };
     spinner.set_prefix("Messages consumed");
@@ -92,6 +93,7 @@ auto consume(const po::variables_map& args) {
             spinner.set_message(stat.to_string());
             spinner.tick();
         }
+        spinner.tick();
     }
 
     spinner.set_prefix("Finished");
