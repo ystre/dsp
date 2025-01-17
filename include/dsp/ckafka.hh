@@ -17,7 +17,7 @@
 
 #include <cstdint>
 
-namespace kf {
+namespace dsp::kf {
 
 using dr_cb_f_sig = void(rd_kafka_t*, const rd_kafka_message_t*, void*);
 using dr_cb_f = std::function<void(rd_kafka_t*, const rd_kafka_message_t*, void*)>;
@@ -157,7 +157,7 @@ public:
         }
     }
 
-    auto send_impl(const dsp::message& msg) -> int {
+    auto send(const dsp::message& msg) -> int {
         // if (not msg.properties.empty()) {
             // rd_kafka_headers_t *hdrs_copy;
             rd_kafka_resp_err_t err;
@@ -165,6 +165,10 @@ public:
             // hdrs_copy = rd_kafka_headers_copy(hdrs);
 
             // TODO: V_RKT instead of V_TOPIC
+
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wold-style-cast"
+
             err = rd_kafka_producev(
                 m_producer.get(),
                 RD_KAFKA_V_TOPIC(msg.subject.c_str()),
@@ -175,6 +179,8 @@ public:
                 // RD_KAFKA_V_HEADERS(hdrs_copy),
                 RD_KAFKA_V_END
             );
+
+            #pragma GCC diagnostic pop
 
             // if (err)
                     // rd_kafka_headers_destroy(hdrs_copy);
@@ -199,4 +205,4 @@ private:
     std::atomic_bool m_keep_alive = true;
 };
 
-} // namespace kf
+} // namespace dsp::kf

@@ -23,7 +23,7 @@
 #include <string>
 #include <thread>
 
-namespace dsp::kf {
+namespace dsp::kf_rdcpp {
 
 using cfg_props = std::map<std::string, std::string>;
 using delivery_callback_f = std::function<void(RdKafka::Message&)>;
@@ -443,4 +443,4 @@ private:
 
 };
 
-} // namespace dsp::kf
+} // namespace dsp::kf_rdcpp
