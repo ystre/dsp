@@ -5,7 +5,7 @@
  */
 
 #include <dsp/cache.hh>
-#include <dsp/kafka.hh>
+#include <dsp/ckafka.hh>
 #include <dsp/tcp.hh>
 
 #include <nova/log.hh>
@@ -55,10 +55,10 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     const auto data = nova::random().string<nova::alphanumeric_distribution>(size);
     nova::log::info("Generated payload with size {}: {}", size, data);
 
-    auto cfg = dsp::kf::properties{};
+    auto cfg = kf::properties{};
     cfg.bootstrap_server(broker);
 
-    auto producer = dsp::kf::producer{ std::move(cfg) };
+    auto producer = kf::producer{ std::move(cfg) };
 
     const auto msg = dsp::message{
         .key = { },
@@ -68,10 +68,10 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     };
 
     for (int i = 0; i < count; ++i) {
-        producer.send(msg);
+        producer.send_impl(msg);
     }
 
-    producer.flush();
+    // producer.flush();
 
     nova::log::info("Finished");
 
