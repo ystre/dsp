@@ -1,0 +1,52 @@
+= Developer`s Guide
+
+Build a Docker image (install Docker Buildx plugin). It contains all the
+necessary build tools for building DSP.
+
+// CMD: devenv
+[source,bash]
+----
+docker build ./env -f ./env/buildenv.Dockerfile -t dsp-dev:latest
+----
+
+Create a container from the built image. All dependencies are downloaded and
+built by Conan. They are not available in the image, so to avoid rebuilding
+everything, keep the container.
+
+Ports used by DSP are exposed and the container can reach the host via
+`host.docker.internal` in case some service runs directly on the host and not
+in another container. It is not necessary to put this container in a docker
+network given the other containers are exposed their ports.
+
+// CMD: create-container
+[source,bash]
+----
+docker run -it --name dsp-build --detach \
+    --volume "${PWD}":"${PWD}" \
+    --workdir "${PWD}" \
+    --add-host=host.docker.internal:host-gateway \
+    --publish 7200:7200 \
+    --publish 9555:9555 \
+    dsp-dev \
+    /bin/bash
+----
+
+Then build DSP code with the custom build wrapper tool, Baldr.
+
+// CMD: build-in-container
+[source,bash]
+----
+docker exec dsp-build \
+    baldr \
+        --project "${PWD}" \
+        --build-type Debug \
+        --target all \
+        --jobs $(($(nproc) / 2))
+
+docker exec dsp-build \
+    baldr \
+        --project "${PWD}" \
+        --build-type Release \
+        --target all \
+        --jobs $(($(nproc) / 2))
+----

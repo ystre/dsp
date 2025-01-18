@@ -3,6 +3,19 @@
 = Data Stream Processing Manual
 :toc:
 
-include::dsp-guide.adoc[leveloffset=+1]
-include::dsp-env.adoc[leveloffset=+1]
-include::dsp-test.adoc[leveloffset=+1]
+== Quick start
+
+Example codes in documentation can be run with `./scripts/rundoc.sh`.
+
+Automated testing can be run with `./scripts/run.sh`.
+
+[source,bash]
+----
+./scripts/rundoc.sh devenv create-container build-in-container
+./scripts/run.sh perf
+----
+
+include::user-guide.adoc[leveloffset=+1]
+include::env.adoc[leveloffset=+1]
+include::test.adoc[leveloffset=+1]
+include::dev-guide.adoc[leveloffset=+1]

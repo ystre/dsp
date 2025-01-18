@@ -34,7 +34,7 @@ function parse_args() {
 }
 
 function msg() {
-    >&2 echo -e "$*"
+    >&2 echo -e "[$(date --rfc-3339=ns) run.sh] $*"
 }
 
 function list-stages() {
