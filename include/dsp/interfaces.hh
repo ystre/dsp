@@ -26,8 +26,8 @@ namespace dsp {
  */
 class kafka_producer : public northbound_interface {
 public:
-    kafka_producer(kf::properties props, std::shared_ptr<metrics_registry> metrics)
-        : m_kafka_client(std::move(props), std::move(metrics))
+    kafka_producer(kf::properties props)
+        : m_kafka_client(std::move(props))
     {}
 
     void stop() override {
@@ -38,13 +38,13 @@ public:
         return m_kafka_client.try_send(msg);
     }
 
-    void delivery_callback(kf::delivery_callback_f callback) {
-        m_kafka_client.delivery_callback(std::move(callback));
-    }
+    // void delivery_callback(kf::delivery_callback_f callback) {
+        // m_kafka_client.delivery_callback(std::move(callback));
+    // }
 
-    void event_callback(kf::event_callback_f callback) {
-        m_kafka_client.event_callback(std::move(callback));
-    }
+    // void event_callback(kf::event_callback_f callback) {
+        // m_kafka_client.event_callback(std::move(callback));
+    // }
 
 private:
     kf::producer m_kafka_client;

@@ -8,8 +8,8 @@
 
 #include <dsp/cache.hh>
 #include <dsp/daemon.hh>
-#include <dsp/ckafka.hh>
 #include <dsp/kafka.hh>
+#include <dsp/kafka-rdcpp.hh>
 #include <dsp/sys.hh>
 #include <dsp/tcp.hh>
 
@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -35,35 +36,24 @@ struct metrics {
     std::size_t n_drop_messages;
 };
 
-// class delivery_handler {
-// public:
-    // void operator()([[maybe_unused]] rd_kafka_t* client, const rd_kafka_message_t* message, [[maybe_unused]] void* opaque) {
-        // if (message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
-            // ++m_metrics.n_drop_messages;
-        // } else {
-            // ++m_metrics.n_sent_messages;
-        // }
-    // }
+class dr_callback : public dsp::kf::delivery_handler {
+public:
+    dr_callback(std::shared_ptr<metrics> metrics)
+        : m_metrics(metrics)
+    {}
 
-    // [[nodiscard]] auto metrics() const -> const metrics& {
-        // return m_metrics;
-    // }
-
-// private:
-    // struct metrics m_metrics {};
-
-// };
-
-metrics g_metrics {};
-
-void dr_callback([[maybe_unused]] rd_kafka_t* client, const rd_kafka_message_t* message, [[maybe_unused]] void* opaque) {
-    if (message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
-        ++g_metrics.n_drop_messages;
-    } else {
-        ++g_metrics.n_sent_messages;
+    void handle_error([[maybe_unused]] const rd_kafka_message_t* message) {
+        ++m_metrics->n_drop_messages;
     }
-}
 
+    void handle_success([[maybe_unused]] const rd_kafka_message_t* message) {
+        ++m_metrics->n_sent_messages;
+    }
+
+private:
+    std::shared_ptr<metrics> m_metrics;
+
+};
 
 auto produce(const po::variables_map& args) {
     const auto broker = args["broker"].as<std::string>();
@@ -74,9 +64,11 @@ auto produce(const po::variables_map& args) {
     const auto data = nova::random().string<nova::alphanumeric_distribution>(size);
     nova::log::info("Generated payload with size {}: {}", size, data);
 
+    auto metrics = std::make_shared<struct metrics>();
+
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
-    cfg.delivery_callback(dr_callback);
+    cfg.delivery_callback(std::make_unique<dr_callback>(metrics));
 
     auto producer = dsp::kf::producer{ std::move(cfg) };
 
@@ -97,8 +89,8 @@ auto produce(const po::variables_map& args) {
             nova::topic_log::info(
                 "kafka",
                 "Messages sent {} (dropped: {}) -- {}",
-                g_metrics.n_sent_messages,
-                g_metrics.n_drop_messages,
+                metrics->n_sent_messages,
+                metrics->n_drop_messages,
                 stat.to_string()
             );
         }

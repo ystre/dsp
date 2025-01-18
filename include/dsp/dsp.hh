@@ -31,17 +31,37 @@ constexpr auto DspVersionPatch = 0;
 
 namespace dsp {
 
+class service;
+
+class northbound_builder {
+    friend service;
+
+public:
+    void build();
+    auto kafka_props() -> kf::properties&;
+
+private:
+    bool m_enabled;
+    std::string m_name;
+    service* m_service_handle;
+    std::any m_cfg;
+
+};
+
+
 /**
  * @brief   The Service which provides the runtime framework.
  */
 class service {
+    friend northbound_builder;
+
 public:
     service(const nova::yaml& config)
         : m_config(config)
     {
         init_southbound();
         init_metrics();
-        init_northbound();
+        // init_northbound();
     }
 
     void start() {
@@ -113,6 +133,32 @@ public:
             }
         );
     }
+
+    auto cfg_northbound() -> northbound_builder {
+        auto builder = northbound_builder{ };
+        builder.m_service_handle = this;
+
+        if (const auto nbi_type = lookup<std::string>("interfaces.northbound.type"); nbi_type == "kafka") {
+            if (not lookup<bool>("interfaces.northbound.enabled")) {
+                builder.m_enabled = false;
+                return builder;
+            }
+
+            builder.m_enabled = true;
+
+            builder.m_name = lookup<std::string>("interfaces.northbound.name");
+
+            auto kafka_cfg = kf::properties{};
+            kafka_cfg.bootstrap_server(lookup<std::string>("interfaces.northbound.address"));
+            // TODO(cfg): generic librdkafka config
+
+            builder.m_cfg = std::make_any<dsp::kf::properties>(kafka_cfg);
+            return builder;
+        } else {
+            throw std::runtime_error(fmt::format("Unsupported configuration: {}", nbi_type));
+        }
+    }
+
 
 private:
     daemon m_daemon_thread;
@@ -205,5 +251,18 @@ private:
     }
 
 };
+
+void northbound_builder::build() {
+    m_service_handle->m_cache->attach_northbound(
+        m_name,
+        std::make_unique<kafka_producer>(
+            std::move(std::any_cast<kf::properties>(m_cfg)),
+            m_service_handle->m_metrics
+        )
+    );
+}
+auto northbound_builder::kafka_props() -> kf::properties& {
+    return std::any_cast<kf::properties>(m_cfg);
+}
 
 } // namespace dsp

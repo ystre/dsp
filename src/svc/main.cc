@@ -51,25 +51,20 @@ auto read_config(const std::string& path) {
 /**
  * @brief   An example custom Kafka delivery handler.
  */
-class delivery_handler {
+class delivery_handler : public dsp::kf::delivery_handler {
 public:
     delivery_handler(std::shared_ptr<dsp::metrics_registry> m)
         : m_metrics(std::move(m))
     {}
 
-    void operator()(RdKafka::Message& message) {
-        if (message.err() != RdKafka::ErrorCode::ERR_NO_ERROR) {
-            logging::error("app", "Delivery error to [{}] ({})", message.topic_name(), message.errstr());
-            m_metrics->increment("drop_messages_total", 1,          { { "drop_type", "kafka_delivery" } });
-            m_metrics->increment("drop_bytes_total", message.len(), { { "drop_type", "kafka_delivery" } });
-        } else {
-            auto topic_name = message.topic_name();
-            boost::replace_all(topic_name, "-", "_");
+    void handle_error(const rd_kafka_message_t* message) override {
+        m_metrics->increment("drop_messages_total", 1,          { { "drop_type", "kafka_delivery" } });
+        m_metrics->increment("drop_bytes_total", message->len, { { "drop_type", "kafka_delivery" } });
+    }
 
-            logging::trace("app", "Kafka delivery success to {}", message.topic_name());
-            m_metrics->increment("sent_messages_total", 1,          { { "topic", topic_name } });
-            m_metrics->increment("sent_bytes_total", message.len(), { { "topic", topic_name } });
-        }
+    void handle_success(const rd_kafka_message_t* message) override {
+        m_metrics->increment("sent_messages_total", 1,          { { "topic", "na" } });
+        m_metrics->increment("sent_bytes_total", message->len, { { "topic", "na" } });
     }
 
 private:
@@ -80,17 +75,17 @@ private:
 /**
  * @brief   Exposing Kafka throttling as a gauge.
  */
-struct event_handler : dsp::kf::detail::event_callback::cb_impl {
-    event_handler(std::shared_ptr<dsp::metrics_registry> m)
-        : m_metrics(std::move(m))
-    {}
+// struct event_handler : dsp::kf::detail::event_callback::cb_impl {
+    // event_handler(std::shared_ptr<dsp::metrics_registry> m)
+        // : m_metrics(std::move(m))
+    // {}
 
-    void handle_throttle(const RdKafka::Event& event) {
-        m_metrics->set("kafka_throttling_time_ms", event.throttle_time());
-    }
+    // void handle_throttle(const RdKafka::Event& event) {
+        // m_metrics->set("kafka_throttling_time_ms", event.throttle_time());
+    // }
 
-    std::shared_ptr<dsp::metrics_registry> m_metrics;
-};
+    // std::shared_ptr<dsp::metrics_registry> m_metrics;
+// };
 
 /**
  * @brief   An example how to create new northbound interfaces.
@@ -177,6 +172,10 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
     ;
 
     auto service = dsp::service(*cfg);
+    service.cfg_northbound()
+        .kafka_props()
+            .delivery_callback(std::make_unique<delivery_handler>(service.get_metrics()))
+        .build();
 
     // TODO(design): Currently it is TCP specfic,
     //               it should accept other factories if compatible.
@@ -188,12 +187,12 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
     // TODO(refact): Metrics are provided and bound by the framework, but relies on this call.
     service.bind_context(std::make_any<AppContext>(app_cfg));
 
-    try {
-        service.northbound<dsp::kafka_producer>("main-nb")->delivery_callback(delivery_handler{ service.get_metrics() });
-        service.northbound<dsp::kafka_producer>("main-nb")->event_callback(event_handler{ service.get_metrics() });
-    } catch (const std::exception& ex) {
-        logging::warn("app", "Kafka delivery handled cannot be attached. Interface `main-nb` is either not enabled or not a Kafka producer");
-    }
+    // try {
+        // service.northbound<dsp::kafka_producer>("main-nb")->delivery_callback(delivery_handler{ service.get_metrics() });
+        // service.northbound<dsp::kafka_producer>("main-nb")->event_callback(event_handler{ service.get_metrics() });
+    // } catch (const std::exception& ex) {
+        // logging::warn("app", "Kafka delivery handled cannot be attached. Interface `main-nb` is either not enabled or not a Kafka producer");
+    // }
 
     service.northbound("custom-nb", std::make_unique<custom_northbound>());
 
