@@ -128,9 +128,9 @@ services:
       - 9092:9092
       - 9093:9093
     volumes:
-      - ./tmp/creds:/etc/kafka/secrets/creds
-      - ./tmp/broker_kafka_server.keystore.jks:/etc/kafka/secrets/broker_kafka_server.keystore.jks:ro
-      - ./tmp/broker_kafka_server.truststore.jks:/etc/kafka/secrets/broker_kafka_server.truststore.jks:ro
+      - ../res/ca-passwd:/etc/kafka/secrets/creds
+      - ../.tmp/dev-server.keystore.jks:/etc/kafka/secrets/dev-server.keystore.jks:ro
+      - ../.tmp/dev-server.truststore.jks:/etc/kafka/secrets/dev-server.truststore.jks:ro
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SSL:SSL,CONTROLLER:PLAINTEXT
@@ -147,10 +147,10 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
-      KAFKA_SSL_KEYSTORE_FILENAME: broker_kafka_server.keystore.jks
+      KAFKA_SSL_KEYSTORE_FILENAME: dev-server.keystore.jks
       KAFKA_SSL_KEYSTORE_CREDENTIALS: creds
       KAFKA_SSL_KEY_CREDENTIALS: creds
-      KAFKA_SSL_TRUSTSTORE_FILENAME: broker_kafka_server.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_FILENAME: dev-server.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: creds
       KAFKA_SSL_CLIENT_AUTH: required # 'none' or 'requested' or 'required' if client authentication is needed
       KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.2,TLSv1.3

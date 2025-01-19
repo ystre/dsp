@@ -1,0 +1,9 @@
+= Useful Commands
+
+Kafka related commands.
+
+[source,bash]
+----
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --topic dev-test --create --partitions 1 --config retention.ms=600000
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --topic dev-test --delete
+----

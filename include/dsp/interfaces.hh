@@ -14,8 +14,8 @@
 #include "dsp/metrics.hh"
 
 #include <prometheus/exposer.h>
-
 #include <prometheus/registry.h>
+
 #include <utility>
 #include <memory>
 
@@ -38,13 +38,9 @@ public:
         return m_kafka_client.try_send(msg);
     }
 
-    // void delivery_callback(kf::delivery_callback_f callback) {
-        // m_kafka_client.delivery_callback(std::move(callback));
-    // }
-
-    // void event_callback(kf::event_callback_f callback) {
-        // m_kafka_client.event_callback(std::move(callback));
-    // }
+    auto queue_size() const -> int {
+        return m_kafka_client.queue_size();
+    }
 
 private:
     kf::producer m_kafka_client;

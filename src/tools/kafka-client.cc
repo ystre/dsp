@@ -9,7 +9,6 @@
 #include <dsp/cache.hh>
 #include <dsp/daemon.hh>
 #include <dsp/kafka.hh>
-#include <dsp/kafka-rdcpp.hh>
 #include <dsp/sys.hh>
 #include <dsp/tcp.hh>
 
@@ -81,8 +80,6 @@ auto produce(const po::variables_map& args) {
 
     auto stat = statistics{ };
 
-    producer.topic(topic);
-
     for (int i = 0; i < count; ++i) {
         producer.try_send(message);
         if (stat.observe(message.payload.size())) {     // TODO: full message size, potentially from delivery handler
@@ -97,36 +94,36 @@ auto produce(const po::variables_map& args) {
     }
 }
 
-auto consume(const po::variables_map& args) {
-    const auto broker = args["broker"].as<std::string>();
-    const auto group_id = args["group-id"].as<std::string>();
-    const auto topic = args["topic"].as<std::string>();
-    const auto batch_size = args["batch-size"].as<std::size_t>();
+auto consume([[maybe_unused]] const po::variables_map& args) {
+    // const auto broker = args["broker"].as<std::string>();
+    // const auto group_id = args["group-id"].as<std::string>();
+    // const auto topic = args["topic"].as<std::string>();
+    // const auto batch_size = args["batch-size"].as<std::size_t>();
 
-    auto cfg = dsp::kf_rdcpp::properties{};
-    cfg.bootstrap_server(broker);
-    cfg.group_id(group_id);
-    cfg.offset_earliest();
+    // auto cfg = dsp::kf_rdcpp::properties{};
+    // cfg.bootstrap_server(broker);
+    // cfg.group_id(group_id);
+    // cfg.offset_earliest();
 
-    auto spinner = dsp::spinner{ };
-    spinner.set_prefix("Messages consumed");
+    // auto spinner = dsp::spinner{ };
+    // spinner.set_prefix("Messages consumed");
 
-    auto stat = statistics{ };
+    // auto stat = statistics{ };
 
-    auto consumer = dsp::kf_rdcpp::consumer{ std::move(cfg) };
-    consumer.subscribe(topic);
+    // auto consumer = dsp::kf_rdcpp::consumer{ std::move(cfg) };
+    // consumer.subscribe(topic);
 
-    while (g_sigint == 0) {
-        for (const auto& message : consumer.consume(batch_size)) {
-            stat.observe(message->len());       // TODO: full message size
-            spinner.set_message(stat.to_string());
-            spinner.tick();
-        }
-        spinner.tick();
-    }
+    // while (g_sigint == 0) {
+        // for (const auto& message : consumer.consume(batch_size)) {
+            // stat.observe(message->len());       // TODO: full message size
+            // spinner.set_message(stat.to_string());
+            // spinner.tick();
+        // }
+        // spinner.tick();
+    // }
 
-    spinner.set_prefix("Finished");
-    spinner.finish();
+    // spinner.set_prefix("Finished");
+    // spinner.finish();
 }
 
 auto parse_args_produce(const std::vector<std::string>& subargs)

@@ -3,3 +3,5 @@ gdb.txt
 compile_commands.json
 
 doc/dsp.html
+
+.tmp/
