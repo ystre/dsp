@@ -28,8 +28,8 @@
 namespace dsp::kf {
 
 template <typename Func>
-struct destroyer {
-    destroyer(Func fn)
+struct caller {
+    caller(Func fn)
         : m_fn(fn)
     {}
 
@@ -177,7 +177,7 @@ public:
         auto config = m_props.create();
 
         char errstr[detail::ErrorMsgLength];
-        m_producer = std::unique_ptr<rd_kafka_t, destroyer<decltype(rd_kafka_destroy)>>(
+        m_producer = std::unique_ptr<rd_kafka_t, caller<decltype(rd_kafka_destroy)>>(
             rd_kafka_new(RD_KAFKA_PRODUCER, config, errstr, sizeof(errstr)),
             rd_kafka_destroy
         );
@@ -226,14 +226,21 @@ public:
      */
     auto topic(const std::string& topic) {
         // TODO: multiple partitions
-        rd_kafka_topic_partition_list_t *topics = rd_kafka_topic_partition_list_new(1);
+        m_topic_partition_list = std::unique_ptr<rd_kafka_topic_partition_list_t, caller<decltype(rd_kafka_topic_partition_list_destroy)>>(
+            rd_kafka_topic_partition_list_new(1),
+            rd_kafka_topic_partition_list_destroy
+        );
 
         // TODO: multiple topics
         // TODO: topic config
-        m_topic = rd_kafka_topic_new(m_producer.get(), topic.c_str(), nullptr);
+        m_topic = std::unique_ptr<rd_kafka_topic_t, caller<decltype(rd_kafka_topic_destroy)>>(
+            rd_kafka_topic_new(m_producer.get(), topic.c_str(), nullptr),
+            rd_kafka_topic_destroy
+        );
+        // TODO: Do we still need this assert?
         nova_assert(m_topic != nullptr);
 
-        rd_kafka_topic_partition_list_add(topics, topic.c_str(), RD_KAFKA_PARTITION_UA);
+        rd_kafka_topic_partition_list_add(m_topic_partition_list.get(), topic.c_str(), RD_KAFKA_PARTITION_UA);
     }
 
     /**
@@ -268,44 +275,58 @@ public:
 
 private:
     properties m_props;
-    std::unique_ptr<rd_kafka_t, destroyer<decltype(rd_kafka_destroy)>> m_producer{ nullptr, rd_kafka_destroy };
+    std::unique_ptr<rd_kafka_t, caller<decltype(rd_kafka_destroy)>> m_producer{ nullptr, rd_kafka_destroy };
     std::jthread m_poll_thread;
     std::atomic_bool m_keep_alive = true;
 
-    rd_kafka_topic_t* m_topic = nullptr;
+    std::unique_ptr<rd_kafka_topic_partition_list_t, caller<decltype(rd_kafka_topic_partition_list_destroy)>> m_topic_partition_list{ nullptr, rd_kafka_topic_partition_list_destroy };
+    std::unique_ptr<rd_kafka_topic_t, caller<decltype(rd_kafka_topic_destroy)>> m_topic{ nullptr, rd_kafka_topic_destroy };
 
     auto send_impl(const dsp::message& msg) -> rd_kafka_resp_err_t {
-        // if (not msg.properties.empty()) {
-            // rd_kafka_headers_t *hdrs_copy;
-            rd_kafka_resp_err_t err;
+        rd_kafka_resp_err_t err;
+        if (not msg.properties.empty()) {
+            rd_kafka_headers_t* headers = rd_kafka_headers_new(msg.properties.size());
 
-            // hdrs_copy = rd_kafka_headers_copy(hdrs);
+            for (const auto& [k, v] : msg.properties) {
+                // TODO(error): RD_KAFKA_RESP_ERR__READ_ONLY if the headers are read-only, else RD_KAFKA_RESP_ERR_NO_ERROR
+                // Does this error matter anyway?
+                rd_kafka_header_add(headers, k.c_str(), static_cast<long>(k.size()), v.c_str(), static_cast<long>(v.size()));
+            }
 
             #pragma GCC diagnostic push
             #pragma GCC diagnostic ignored "-Wold-style-cast"
 
             err = rd_kafka_producev(
                 m_producer.get(),
-                RD_KAFKA_V_RKT(m_topic),
-                // RD_KAFKA_V_PARTITION(partition),
+                RD_KAFKA_V_RKT(m_topic.get()),
+                RD_KAFKA_V_PARTITION(RD_KAFKA_PARTITION_UA),
                 RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
                 RD_KAFKA_V_VALUE(reinterpret_cast<void*>(const_cast<std::byte*>(msg.payload.data())), msg.payload.size()),
                 RD_KAFKA_V_KEY(reinterpret_cast<void*>(const_cast<std::byte*>(msg.key.data())), msg.key.size()),
-                // RD_KAFKA_V_HEADERS(hdrs_copy),
+                RD_KAFKA_V_HEADERS(headers),
                 RD_KAFKA_V_END
             );
 
             #pragma GCC diagnostic pop
 
-            // if (err)
-                    // rd_kafka_headers_destroy(hdrs_copy);
+            if (err) {
+                rd_kafka_headers_destroy(headers);
+            }
 
-            return err;
-        // } else {
-            // if (rd_kafka_produce(rkt, partition, msgflags, payload, size,
-                                 // key, key_size, NULL) == -1)
-                // return rd_kafka_last_error();
-        // }
+        } else {
+            rd_kafka_produce(
+                m_topic.get(),
+                RD_KAFKA_PARTITION_UA,
+                RD_KAFKA_MSG_F_COPY,
+                reinterpret_cast<void*>(const_cast<std::byte*>(msg.payload.data())),
+                msg.payload.size(),
+                reinterpret_cast<const void*>(msg.key.data()),
+                msg.key.size(),
+                NULL
+            );
+            err = rd_kafka_last_error();
+        }
+        return err;
     }
 
 };

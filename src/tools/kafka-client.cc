@@ -75,7 +75,7 @@ auto produce(const po::variables_map& args) {
     const auto message = dsp::message{
         .key = { },
         .subject = topic,
-        .properties = { },
+        .properties = { { "ts", "1234" } },
         .payload = nova::data_view(data).to_vec()
     };
 
