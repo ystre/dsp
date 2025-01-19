@@ -99,6 +99,22 @@ public:
         m_delivery_callback = std::move(callback);
     }
 
+    void set(const std::string& key, const std::string& value) {
+        m_cfg[key] = value;
+    }
+
+    void tls(const std::string& ca_loc) {
+        m_cfg["security.protocol"] = "ssl";
+        m_cfg["ssl.ca.location"] = ca_loc;
+    }
+
+    void mtls(const std::string& ca_loc, const std::string& cert_loc, const std::string& key_loc, const std::string& key_pw = "") {
+        tls(ca_loc);
+        m_cfg["ssl.certificate.location"] = cert_loc;
+        m_cfg["ssl.key.location"] = key_loc;
+        m_cfg["ssl.key.password"] = key_pw;
+    }
+
     auto create() {
         auto config = rd_kafka_conf_new();
 
