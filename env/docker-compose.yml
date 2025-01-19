@@ -57,6 +57,8 @@ services:
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
 
   redpanda-0:
+    profiles:
+      - redpanda
     command:
       - redpanda
       - start
@@ -89,7 +91,10 @@ services:
       - 18082:18082
       - 19092:19092
       - 19644:9644
-  console:
+
+  redpanda-console:
+    profiles:
+      - redpanda
     container_name: redpanda-console
     image: docker.redpanda.com/redpandadata/console:v2.7.2
     networks:
@@ -112,3 +117,41 @@ services:
       - 8080:8080
     depends_on:
       - redpanda-0
+
+  kafka:
+    profiles:
+      - kafka
+    image: apache/kafka:latest
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - 9092:9092
+      - 9093:9093
+    volumes:
+      - ../res/ca-passwd:/etc/kafka/secrets/creds
+      - ../.tmp/dev-server.keystore.jks:/etc/kafka/secrets/dev-server.keystore.jks:ro
+      - ../.tmp/dev-server.truststore.jks:/etc/kafka/secrets/dev-server.truststore.jks:ro
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SSL:SSL,CONTROLLER:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://kafka:9092,SSL://kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092,SSL://0.0.0.0:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_SSL_KEYSTORE_FILENAME: dev-server.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: creds
+      KAFKA_SSL_KEY_CREDENTIALS: creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: dev-server.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: creds
+      KAFKA_SSL_CLIENT_AUTH: required # 'none' or 'requested' or 'required' if client authentication is needed
+      KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.2,TLSv1.3
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS

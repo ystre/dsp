@@ -15,6 +15,7 @@ class Dsp(ConanFile):
         self.options["fmt/*"].header_only = True
         self.options["spdlog/*"].header_only = True
         self.options["spdlog/*"].use_std_fmt = False
+        self.options["librdkafka/*"].ssl = True
 
     def requirements(self):
         requirements = self.conan_data.get("requirements", [])

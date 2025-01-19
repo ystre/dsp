@@ -48,9 +48,9 @@ The following scripts are provided for testing:
 
 ===== Baseline performance
 
-Command: `scripts/ft.sh`
+Command: `scripts/run.sh perf-tcp`
 
-Input data: 20 million 200-byte messages
+Input data: 20 million 200-byte messages.
 
 Results as measured by the code. `handler_frame` class provides a
 `perf_summary()` function that reports a summary when the connection is closed

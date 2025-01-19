@@ -12,10 +12,11 @@ Automated testing can be run with `./scripts/run.sh`.
 [source,bash]
 ----
 ./scripts/rundoc.sh devenv create-container build-in-container
-./scripts/run.sh perf
+./scripts/run.sh build test ft-kafka-producer perf-tcp perf-kafka-producer perf-dsp doc
 ----
 
 include::user-guide.adoc[leveloffset=+1]
 include::env.adoc[leveloffset=+1]
 include::test.adoc[leveloffset=+1]
 include::dev-guide.adoc[leveloffset=+1]
+include::cmd.adoc[leveloffset=+1]

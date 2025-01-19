@@ -4,7 +4,8 @@ Reference implementation of Data Stream Processing.
 
 This is an early prototype.
 
-For a detailed documentation see `doc` directory.
+For a detailed documentation see `doc` directory. It is organized into a
+AsciiDoc book: `doc/dsp.adoc`.
 
 ## Project structure
 

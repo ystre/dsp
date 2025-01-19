@@ -12,7 +12,7 @@ dsp:
       enabled: false
       name: main-nb
       type: kafka
-      address: localhost:19092
+      address: localhost:9092
       # - name: main-nb
         # type: kafka
         # address: kafka:9092

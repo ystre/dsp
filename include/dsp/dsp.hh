@@ -31,17 +31,36 @@ constexpr auto DspVersionPatch = 0;
 
 namespace dsp {
 
+class service;
+
+class northbound_builder {
+    friend service;
+
+public:
+    void build();
+    auto kafka_props() -> std::shared_ptr<kf::properties>;
+
+private:
+    bool m_enabled;
+    std::string m_name;
+    service* m_service_handle;
+    std::any m_cfg;
+
+};
+
+
 /**
  * @brief   The Service which provides the runtime framework.
  */
 class service {
+    friend northbound_builder;
+
 public:
     service(const nova::yaml& config)
         : m_config(config)
     {
         init_southbound();
         init_metrics();
-        init_northbound();
     }
 
     void start() {
@@ -114,6 +133,38 @@ public:
         );
     }
 
+    auto cfg_northbound() -> northbound_builder {
+        auto builder = northbound_builder{ };
+        builder.m_service_handle = this;
+
+        if (const auto nbi_type = lookup<std::string>("interfaces.northbound.type"); nbi_type == "kafka") {
+            if (not lookup<bool>("interfaces.northbound.enabled")) {
+                builder.m_enabled = false;
+                return builder;
+            }
+
+            builder.m_enabled = true;
+
+            builder.m_name = lookup<std::string>("interfaces.northbound.name");
+
+            auto kafka_cfg = std::make_shared<kf::properties>();
+            kafka_cfg->bootstrap_server(lookup<std::string>("interfaces.northbound.address"));
+
+            // FIXME: yaml.lookup with non-existent key
+            try {
+                kafka_cfg->statistics_interval(lookup<std::string>("interfaces.northbound.statistics-interval-ms"));
+            } catch (...) {}
+
+            // TODO(cfg): generic librdkafka config
+
+            builder.m_cfg = std::make_any<std::shared_ptr<kf::properties>>(kafka_cfg);
+            return builder;
+        } else {
+            throw std::runtime_error(fmt::format("Unsupported configuration: {}", nbi_type));
+        }
+    }
+
+
 private:
     daemon m_daemon_thread;
     nova::yaml m_config;
@@ -131,31 +182,6 @@ private:
             m_tcp_server = std::make_unique<tcp::server>(tcp::net_config { "0.0.0.0", port });
         } else {
             throw std::runtime_error("Unsupported configuration");
-        }
-    }
-
-    void init_northbound() {
-        // TODO(refact): iterate over interfaces
-        // TODO(nova-feat): yaml `contains()`
-        if (const auto nbi_type = lookup<std::string>("interfaces.northbound.type"); nbi_type == "kafka") {
-            if (not lookup<bool>("interfaces.northbound.enabled")) {
-                return;
-            }
-
-            const auto name = lookup<std::string>("interfaces.northbound.name");
-
-            // TODO(cfg): generic librdkafka config
-            const auto port = lookup<std::string>("interfaces.northbound.address");
-
-            auto kafka_cfg = kf::properties{};
-            kafka_cfg.bootstrap_server(lookup<std::string>("interfaces.northbound.address"));
-
-            m_cache->attach_northbound(
-                name,
-                std::make_unique<kafka_producer>(std::move(kafka_cfg), m_metrics)
-            );
-        } else {
-            throw std::runtime_error(fmt::format("Unsupported configuration: {}", nbi_type));
         }
     }
 
@@ -178,7 +204,7 @@ private:
      *
      * It is a blocking call.
      *
-     * If and when the daemon stops, all other threads must be stopped.
+     * When the daemon stops, all other threads must be stopped.
      *
      * Daemon can be stopped via sending SIGINT or SIGTERM to the process.
      */
@@ -189,6 +215,12 @@ private:
             m_metrics->set("connection_count", m.n_connections.load());
             m_metrics->set("tcp_buffer_size", m.buffer.load());
             m_metrics->set("tcp_buffer_capacity", m.buffer_capacity.load());
+
+            // TODO: If Kafka is enabled. No hardcoding interface name.
+            try {
+                m_metrics->set("kafka_queue_size", northbound<dsp::kafka_producer>("main-nb")->queue_size());
+            } catch (...) {}
+
             return true;
         });
 
@@ -205,5 +237,17 @@ private:
     }
 
 };
+
+void northbound_builder::build() {
+    m_service_handle->m_cache->attach_northbound(
+        m_name,
+        std::make_unique<kafka_producer>(
+            std::move(std::any_cast<std::shared_ptr<dsp::kf::properties>>(m_cfg).operator*())
+        )
+    );
+}
+auto northbound_builder::kafka_props() -> std::shared_ptr<kf::properties> {
+    return std::any_cast<std::shared_ptr<dsp::kf::properties>>(m_cfg);
+}
 
 } // namespace dsp

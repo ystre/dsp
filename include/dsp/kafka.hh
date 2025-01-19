@@ -2,250 +2,265 @@
  * Part of Data Stream Processing framework.
  *
  * DSP - Kafka clients
+ *
+ * Wrappers around librdkafka's C API for maximum performance.
+ *
+ * Dev note: low-level code, pay extra attention when changing the code and use sanitizers!
  */
 
 #pragma once
 
-#include "dsp/cache.hh"
-#include "dsp/metrics.hh"
+#include <dsp/cache.hh>
 
+#include <nova/error.hh>
 #include <nova/log.hh>
 
-#include <fmt/chrono.h>
-#include <librdkafka/rdkafkacpp.h>
+#include <librdkafka/rdkafka.h>
 
 #include <atomic>
 #include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <thread>
 
 namespace dsp::kf {
 
-using cfg_props = std::map<std::string, std::string>;
-using delivery_callback_f = std::function<void(RdKafka::Message&)>;
-using event_callback_f = std::function<void(RdKafka::Event&)>;
+template <typename Func>
+struct caller {
+    caller(Func fn)
+        : m_fn(fn)
+    {}
+
+    template <typename T>
+    void operator()(T* obj) const {
+        m_fn(obj);
+    }
+
+private:
+    std::function<Func> m_fn;
+};
+
+/**
+ * @brief   An abstraction that hides C API and delegates to error and success handlers.
+ *
+ * TODO(design): Acutally hide the `rd_kafka_message_t` type from client code.
+ */
+class delivery_handler {
+public:
+    void operator()(const rd_kafka_message_t* message) {
+        if (message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+            handle_error(message);
+        } else {
+            handle_success(message);
+        }
+    }
+
+    virtual ~delivery_handler() = default;
+
+protected:
+    virtual void handle_error(const rd_kafka_message_t*) = 0;
+    virtual void handle_success(const rd_kafka_message_t*) = 0;
+};
+
+class throttle_handler {
+public:
+    virtual void operator()(const std::string& broker_name, std::chrono::milliseconds throttle_time) = 0;
+    virtual ~throttle_handler() = default;
+};
+
+class statistics_handler {
+public:
+    virtual void operator()(const std::string& json_str) = 0;
+    virtual ~statistics_handler() = default;
+};
 
 namespace detail {
 
+    enum RdKafkaLogLevel {
+        emerg = 0,
+        alert = 1,
+        crit = 2,
+        err = 3,
+        warning = 4,
+        notice = 5,
+        info = 6,
+        debug = 7,
+    };
+
+    constexpr std::size_t ErrorMsgLength = 512;
+
+    struct callbacks_t {
+        std::unique_ptr<delivery_handler> delivery = nullptr;
+        std::unique_ptr<throttle_handler> throttle = nullptr;
+        std::unique_ptr<statistics_handler> statistics = nullptr;
+    };
+
     /**
-     * @brief   Delivery callback springboard.
-     *
-     * Contains a default implementation.
-     *
-     * TODO(metrics): Maybe from stat callback?
+     * @brief   Trampoline function to call delivery handler object.
      */
-    class delivery_callback : public RdKafka::DeliveryReportCb {
-        struct cb_impl {
-            void operator()(RdKafka::Message& message) {
-                if (message.err() != RdKafka::ErrorCode::ERR_NO_ERROR) {
-                    handle_error(message);
-                } else {
-                    handle_success(message);
-                }
-            }
+    inline void delivery_callback([[maybe_unused]] rd_kafka_t* client, const rd_kafka_message_t* message, void* opaque) {
+        auto* context = static_cast<callbacks_t*>(opaque);
+        context->delivery->operator()(message);
+    }
 
-            void handle_error(RdKafka::Message& message) {
-                nova::topic_log::error("kafka", "Delivery error - {}", message.errstr());
-            }
+    /**
+     * @brief   Trampoline function to call throttle handler object.
+     */
+    inline void throttle_callback(
+            [[maybe_unused]] rd_kafka_t* client,
+            const char* broker_name,
+            [[maybe_unused]] int32_t broker_id,
+            int throttle_time_ms,
+            void* opaque)
+    {
+        auto* context = static_cast<callbacks_t*>(opaque);
+        context->throttle->operator()(broker_name, std::chrono::milliseconds{ throttle_time_ms });
+    }
 
-            void handle_success(RdKafka::Message& message) {
-                nova::topic_log::trace(
-                    "kafka",
-                    "Delivery success to topic {}[{}]",
-                    message.topic_name(),
-                    message.offset()
-                );
-            }
-        };
+    inline void log_callback(
+            [[maybe_unused]] const rd_kafka_t* client,
+            int level,
+            [[maybe_unused]] const char* fac,
+            const char* msg)
+    {
+        using enum RdKafkaLogLevel;
 
-    public:
-        delivery_callback()
-            : m_callback(cb_impl{ })
-        {}
-
-        /**
-         * @brief   Customization point.
-         */
-        void set_callback(delivery_callback_f func) {
-            m_callback = std::move(func);
+        switch (level) {
+            case emerg:     nova::topic_log::critical("kafka", "{}", msg);  break;
+            case alert:     nova::topic_log::critical("kafka", "{}", msg);  break;
+            case crit:      nova::topic_log::critical("kafka", "{}", msg);  break;
+            case err:       nova::topic_log::error("kafka", "{}", msg);     break;
+            case warning:   nova::topic_log::warn("kafka", "{}", msg);      break;
+            case notice:    nova::topic_log::info("kafka", "{}", msg);      break;
+            case info:      nova::topic_log::info("kafka", "{}", msg);      break;
+            case debug:     nova::topic_log::debug("kafka", "{}", msg);     break;
         }
+    }
 
-        /**
-         * @brief   Called by librdkafka on delivery.
-         */
-        void dr_cb(RdKafka::Message& message) override {
-            std::invoke(m_callback, message);
-        }
-
-    private:
-        delivery_callback_f m_callback;
-
-    };
-
-    class event_callback : public RdKafka::EventCb {
-    public:
-        struct cb_impl {
-            void operator()(RdKafka::Event& event) {
-                using enum RdKafka::Event::Type;
-
-                switch (event.type()) {
-                    case EVENT_ERROR:       handle_error(event);    break;
-                    case EVENT_LOG:         handle_log(event);      break;
-                    case EVENT_STATS:       handle_stats(event);    break;
-                    case EVENT_THROTTLE:    handle_throttle(event); break;
-                };
-            }
-
-            virtual void handle_log(const RdKafka::Event& event) {
-                using enum RdKafka::Event::Severity;
-
-                switch (event.severity()) {
-                    case EVENT_SEVERITY_EMERG:    nova::topic_log::critical("kafka", "{}", event.str());  break;
-                    case EVENT_SEVERITY_ALERT:    nova::topic_log::critical("kafka", "{}", event.str());  break;
-                    case EVENT_SEVERITY_CRITICAL: nova::topic_log::critical("kafka", "{}", event.str());  break;
-                    case EVENT_SEVERITY_ERROR:    nova::topic_log::error("kafka", "{}", event.str());     break;
-                    case EVENT_SEVERITY_WARNING:  nova::topic_log::warn("kafka", "{}", event.str());      break;
-                    case EVENT_SEVERITY_NOTICE:   nova::topic_log::info("kafka", "{}", event.str());      break;
-                    case EVENT_SEVERITY_INFO:     nova::topic_log::info("kafka", "{}", event.str());      break;
-                    case EVENT_SEVERITY_DEBUG:    nova::topic_log::debug("kafka", "{}", event.str());     break;
-                }
-            }
-
-            virtual void handle_stats(const RdKafka::Event& event) {
-                nova::topic_log::debug("kafka", "Received stats: {}", event.str().size());
-            }
-
-            virtual void handle_error(const RdKafka::Event& event) {
-                nova::topic_log::warn("kafka", "{}", RdKafka::err2str(event.err()));
-            }
-
-            virtual void handle_throttle(const RdKafka::Event& event) {
-                nova::topic_log::trace(
-                    "kafka",
-                    "Throttling: {} (broker: {})",
-                    std::chrono::milliseconds{ event.throttle_time() },
-                    event.broker_name()
-                );
-            }
-
-            virtual ~cb_impl() = default;
-        };
-
-    public:
-        event_callback()
-            : m_callback(cb_impl{ })
-        {}
-
-        /**
-         * @brief   Customization point.
-         */
-        void set_callback(event_callback_f func) {
-            m_callback = std::move(func);
-        }
-
-        /**
-         * @brief   Called by librdkafka on event delivery.
-         */
-        void event_cb(RdKafka::Event& event) override {
-            std::invoke(m_callback, event);
-        }
-
-    private:
-        event_callback_f m_callback;
-
-    };
+    /**
+     * @brief   Trampoline function to call statistics handler object.
+     */
+    inline int statistics_callback([[maybe_unused]] rd_kafka_t* client, char* json, size_t json_len, void* opaque) {
+        auto* context = static_cast<callbacks_t*>(opaque);
+        context->statistics->operator()(std::string{ json, json_len });
+        return 0;
+    }
 
 } // namespace detail
 
 /**
  * @brief   A factory-like class to create the configuration.
  *
- * Dual-API
+ * Dual-API:
+ * - "famous" properties are exposed via named functions,
+ * - otherwise `set(key, value)` can be used.
+ *
+ * It holds both producer and consumer properties; not all of them applies to both.
  */
 class properties {
+    using delivery_callback_signature = void(rd_kafka_t*, const rd_kafka_message_t*, void*);
+    using throttle_callback_signature = void(rd_kafka_t*, const char*, int32_t, int, void*);
+    using statistics_callback_signature = int(rd_kafka_t*, char*, size_t, void*);
+
 public:
     static constexpr auto BootstrapServers = "bootstrap.servers";
+    static constexpr auto GroupId = "group.id";
+    static constexpr auto OffsetReset = "auto.offset.reset";
+    static constexpr auto StatisticsInterval = "statistics.interval.ms";
+
+    /**
+     * @brief   Set an arbitrary property.
+     */
+    void set(const std::string& key, const std::string& value) {
+        m_cfg[key] = value;
+    }
 
     void bootstrap_server(const std::string& value) {
         m_cfg[BootstrapServers] = value;
     }
 
-    void delivery_callback(std::unique_ptr<RdKafka::DeliveryReportCb> callback) {
-        m_dr_cb = std::move(callback);
+    void statistics_interval(const std::string& value) {
+        m_cfg[StatisticsInterval] = value;
     }
 
-    void event_callback(std::unique_ptr<RdKafka::EventCb> callback) {
-        m_event_cb = std::move(callback);
+    void tls(const std::string& ca_loc) {
+        m_cfg["security.protocol"] = "ssl";
+        m_cfg["ssl.ca.location"] = ca_loc;
     }
 
-    auto create() -> std::unique_ptr<RdKafka::Conf> {
-        auto config = std::unique_ptr<RdKafka::Conf>(
-            RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL)
-        );
+    void mtls(const std::string& ca_loc, const std::string& cert_loc, const std::string& key_loc, const std::string& key_pw = "") {
+        tls(ca_loc);
+        m_cfg["ssl.certificate.location"] = cert_loc;
+        m_cfg["ssl.key.location"] = key_loc;
+        m_cfg["ssl.key.password"] = key_pw;
+    }
 
-        if (config == nullptr) {
-            throw std::runtime_error("Failed to create Kafka global configuration");
+    /**
+     * @brief   Consumer Group ID.
+     *
+     * https://developer.confluent.io/faq/apache-kafka/kafka-clients/#kafka-clients-what-is-groupid-in-kafka
+     */
+    void group_id(const std::string& value) {
+        m_cfg[GroupId] = value;
+    }
+
+    void offset_earliest() {
+        m_cfg[OffsetReset] = "earliest";
+    }
+
+    void offset_latest() {
+        m_cfg[OffsetReset] = "latest";
+    }
+
+    void delivery_callback(std::unique_ptr<delivery_handler> callback) {
+        m_callbacks.delivery = std::move(callback);
+    }
+
+    void throttle_callback(std::unique_ptr<throttle_handler> callback) {
+        m_callbacks.throttle = std::move(callback);
+    }
+
+    void statistics_callback(std::unique_ptr<statistics_handler> callback) {
+        m_callbacks.statistics = std::move(callback);
+    }
+
+    /**
+     * @brief   Create RdKafka configuration object.
+     */
+    auto create() {
+        rd_kafka_conf_t* config = rd_kafka_conf_new();
+        nova_assert(config != nullptr);
+
+        set_basic_props(config);
+        rd_kafka_conf_set_opaque(config, &m_callbacks);
+        rd_kafka_conf_set_log_cb(config, detail::log_callback);
+
+        if (m_callbacks.delivery != nullptr) {
+            set(config, detail::delivery_callback);
         }
 
-        set_basic_props(config.get());
-
-        if (m_dr_cb == nullptr) {
-            m_dr_cb = std::make_unique<detail::delivery_callback>();
+        if (m_callbacks.throttle != nullptr) {
+            set(config, detail::throttle_callback);
         }
 
-        set(config.get(), m_dr_cb.get());
-
-        if (m_event_cb == nullptr) {
-            m_event_cb = std::make_unique<detail::event_callback>();
+        if (m_callbacks.statistics != nullptr) {
+            set(config, detail::statistics_callback);
         }
-
-        set(config.get(), m_event_cb.get());
 
         return config;
     }
 
-    /**
-     * @brief   Access the created delivery handler.
-     */
-    [[nodiscard]] auto delivery_callback() -> detail::delivery_callback* {
-        auto* ptr = dynamic_cast<detail::delivery_callback*>(m_dr_cb.get());
-        if (ptr == nullptr) {
-            throw std::logic_error(
-                "Delivery callback is not inherited from `delivery_callback`; "
-                "Most likely it is a native librdkafka callback."
-            );
-        }
-        return ptr;
-    }
-
-    /**
-     * @brief   Access the created delivery handler.
-     */
-    [[nodiscard]] auto event_callback() -> detail::event_callback* {
-        auto* ptr = dynamic_cast<detail::event_callback*>(m_event_cb.get());
-        if (ptr == nullptr) {
-            throw std::logic_error(
-                "Event callback is not inherited from `event_callback`; "
-                "Most likely it is a native librdkafka callback."
-            );
-        }
-        return ptr;
-    }
-
 private:
     std::map<std::string, std::string> m_cfg;
-    std::unique_ptr<RdKafka::DeliveryReportCb> m_dr_cb = nullptr;
-    std::unique_ptr<RdKafka::EventCb> m_event_cb = nullptr;
+    detail::callbacks_t m_callbacks;
 
-    void set_basic_props(RdKafka::Conf* config) {
-        std::string errstr;
+    void set_basic_props(rd_kafka_conf_t* config) {
+        char errstr[detail::ErrorMsgLength];
         for (const auto& [k, v] : m_cfg) {
-            if (config->set(k, v, errstr) != RdKafka::Conf::CONF_OK) {
-                throw std::runtime_error(errstr);
+            if (rd_kafka_conf_set(config, k.c_str(), v.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+                throw nova::exception(errstr);
             }
         }
     }
@@ -253,44 +268,35 @@ private:
     /**
      * @brief   Set a delivery callback.
      */
-    static void set(RdKafka::Conf* config, RdKafka::DeliveryReportCb* value) {
-        std::string errstr;
-        if (config->set("dr_cb", value, errstr) != RdKafka::Conf::CONF_OK) {
-            throw std::runtime_error(errstr);
-        }
+    void set(rd_kafka_conf_t* config, delivery_callback_signature value) {
+        rd_kafka_conf_set_dr_msg_cb(config, value);
     }
 
     /**
-     * @brief   Set an event callback.
+     * @brief   Set a throttle callback.
      */
-    static void set(RdKafka::Conf* config, RdKafka::EventCb* value) {
-        std::string errstr;
-        if (config->set("event_cb", value, errstr) != RdKafka::Conf::CONF_OK) {
-            throw std::runtime_error(errstr);
-        }
+    void set(rd_kafka_conf_t* config, throttle_callback_signature value) {
+        rd_kafka_conf_set_throttle_cb(config, value);
     }
 
+    /**
+     * @brief   Set a statistics callback.
+     */
+    void set(rd_kafka_conf_t* config, statistics_callback_signature value) {
+        rd_kafka_conf_set_stats_cb(config, value);
+    }
 };
 
-/**
- * @brief   A Kafka producer based on librdkafka's C++ wrapper.
- *
- * A background thread is started that continuously polls for delivery reports, etc...
- */
 class producer {
     struct poller {
-        RdKafka::Producer* producer;
-        std::atomic_bool& keep_alive;
+        static constexpr auto PollTimeout  = std::chrono::milliseconds{ 1000 };
 
-        // TODO(refact): Create Kafka's own metrics and expose them.
-        std::shared_ptr<metrics_registry> stat;
+        rd_kafka_t* producer;
+        std::atomic_bool& keep_alive;
 
         void operator()() {
             while (keep_alive.load()) {
-                producer->poll(1000);
-                if (stat != nullptr) {
-                    stat->set("kafka_queue_size", producer->outq_len());
-                }
+                rd_kafka_poll(producer, static_cast<int>(PollTimeout.count()));
             }
         }
     };
@@ -300,26 +306,25 @@ public:
     /**
      * @brief   Create a Kafka producer and start a background polling thread.
      */
-    producer(properties props, std::shared_ptr<metrics_registry> metrics = nullptr)
+    producer(properties props)
         : m_props(std::move(props))
     {
         auto config = m_props.create();
 
-        std::string errstr;
-        m_producer = std::unique_ptr<RdKafka::Producer>(RdKafka::Producer::create(config.get(), errstr));
-
-        m_delivery_callback = m_props.delivery_callback();
-        m_event_callback = m_props.event_callback();
+        char errstr[detail::ErrorMsgLength];
+        m_producer = std::unique_ptr<rd_kafka_t, caller<decltype(rd_kafka_destroy)>>(
+            rd_kafka_new(RD_KAFKA_PRODUCER, config, errstr, sizeof(errstr)),
+            rd_kafka_destroy
+        );
 
         if (m_producer == nullptr) {
-            throw std::runtime_error("Failed to create producer: " + errstr);
+            throw nova::exception("Failed to create producer: {}", errstr);
         }
 
         m_poll_thread = std::jthread(
             poller{
                 m_producer.get(),
-                m_keep_alive,
-                std::move(metrics)
+                m_keep_alive
             }
         );
     }
@@ -330,20 +335,36 @@ public:
     producer& operator=(producer&&)         = delete;
 
     ~producer() {
+        static constexpr auto FlushTimeout = std::chrono::milliseconds{ 5000 };
+
         if (m_producer != nullptr) {
-            m_producer->flush(5000);
+            // TODO(design): Should the destructor flush? No opportunity to handle if flush times out.
+            rd_kafka_flush(m_producer.get(), static_cast<int>(FlushTimeout.count()));
             if (m_keep_alive.load()) {
                 stop();
             }
         }
     }
 
-    void delivery_callback(delivery_callback_f callback) {
-        m_delivery_callback->set_callback(std::move(callback));
+    /**
+     * @brief   Flush.
+     *
+     * @returns false if it timed out.
+     */
+    [[nodiscard]] auto flush(std::chrono::milliseconds timeout) -> bool {
+        return rd_kafka_flush(m_producer.get(), static_cast<int>(timeout.count()))
+            != RD_KAFKA_RESP_ERR__TIMED_OUT;
     }
 
-    void event_callback(event_callback_f callback) {
-        m_event_callback->set_callback(std::move(callback));
+    /**
+     * @brief   Return the number of messages and events waiting in queues.
+     *
+     * - Messages to be sent or waiting for acknowledge.
+     * - Delivery reports.
+     * - Callbacks.
+     */
+    [[nodiscard]] auto queue_size() const -> int {
+        return rd_kafka_outq_len(m_producer.get());
     }
 
     /**
@@ -356,25 +377,28 @@ public:
      *            - Unknown partition or topic
      */
     void send(const message& msg) {
+        static constexpr auto PollTimeout  = std::chrono::milliseconds{ 100 };
+
         bool doit = true;
 
         while (doit) {
             const auto status = send_impl(msg);
 
             switch (status) {
-                case RdKafka::ERR_MSG_SIZE_TOO_LARGE:   throw std::runtime_error("Too large message");
-                case RdKafka::ERR__UNKNOWN_PARTITION:   throw std::runtime_error("Unknown partition");
-                case RdKafka::ERR__UNKNOWN_TOPIC:       throw std::runtime_error("Unknown topic");
+                case RD_KAFKA_RESP_ERR_MSG_SIZE_TOO_LARGE:   throw nova::exception("Too large message");
+                case RD_KAFKA_RESP_ERR__UNKNOWN_PARTITION:   throw nova::exception("Unknown partition");
+                case RD_KAFKA_RESP_ERR__UNKNOWN_TOPIC:       throw nova::exception("Unknown topic");
                 default: ; /* NO-OP */
             }
 
-            if (status == RdKafka::ERR__QUEUE_FULL) {
-                m_producer->poll(100);
+            if (status == RD_KAFKA_RESP_ERR__QUEUE_FULL) {
+                rd_kafka_poll(m_producer.get(), static_cast<int>(PollTimeout.count()));
             } else {
                 doit = false;
             }
         }
     }
+
 
     /**
      * @brief   Try to enqueue a message.
@@ -387,22 +411,18 @@ public:
      *            - Message is larger than "messages.max.bytes"
      *            - Unknown partition or topic
      */
-    auto try_send(const message& msg) -> bool {
+    auto try_send(const dsp::message& msg) -> bool {
         const auto status = send_impl(msg);
 
         switch (status) {
-            case RdKafka::ERR_MSG_SIZE_TOO_LARGE:   throw std::runtime_error("Too large message");
-            case RdKafka::ERR__UNKNOWN_PARTITION:   throw std::runtime_error("Unknown partition");
-            case RdKafka::ERR__UNKNOWN_TOPIC:       throw std::runtime_error("Unknown topic");
-            case RdKafka::ERR__QUEUE_FULL:          return false;
+            case RD_KAFKA_RESP_ERR_MSG_SIZE_TOO_LARGE:  throw nova::exception("Too large message");
+            case RD_KAFKA_RESP_ERR__UNKNOWN_PARTITION:  throw nova::exception("Unknown partition");
+            case RD_KAFKA_RESP_ERR__UNKNOWN_TOPIC:      throw nova::exception("Unknown topic");
+            case RD_KAFKA_RESP_ERR__QUEUE_FULL:         return false;
             default: ; /* NO-OP */
         }
 
         return true;
-    }
-
-    void flush() {
-        m_producer->flush(5000);
     }
 
     void stop() {
@@ -410,35 +430,96 @@ public:
         m_keep_alive.store(false);
     }
 
-    [[nodiscard]] auto queue() const -> int {
-        return m_producer->outq_len();
-    }
-
 private:
     properties m_props;
-    std::atomic_bool m_keep_alive { true };
-    std::unique_ptr<RdKafka::Producer> m_producer { nullptr };
-
+    std::unique_ptr<rd_kafka_t, caller<decltype(rd_kafka_destroy)>> m_producer{ nullptr, rd_kafka_destroy };
     std::jthread m_poll_thread;
-    detail::delivery_callback* m_delivery_callback;
-    detail::event_callback* m_event_callback;
+    std::atomic_bool m_keep_alive = true;
 
-    auto send_impl(const message& msg) -> RdKafka::ErrorCode {
-        return m_producer->produce(
-            msg.subject,
-            RdKafka::Topic::PARTITION_UA,
-            RdKafka::Producer::RK_MSG_COPY,
+    struct topic_t {
+        std::unique_ptr<rd_kafka_topic_partition_list_t, caller<decltype(rd_kafka_topic_partition_list_destroy)>> partitions{ nullptr, rd_kafka_topic_partition_list_destroy };
+        std::unique_ptr<rd_kafka_topic_t, caller<decltype(rd_kafka_topic_destroy)>> handle{ nullptr, rd_kafka_topic_destroy };
+    };
 
-            const_cast<std::byte*>(msg.payload.data()),
-            msg.payload.size(),
+    using topics_t = std::map<std::string, topic_t>;
+    topics_t m_topics;
 
-            msg.key.data(),
-            msg.key.size(),
+    /**
+     * @brief   Create a topic handle and cache it.
+     *
+     * TODO: Update metadata?
+     */
+    auto topic(const std::string& name) -> rd_kafka_topic_t* {
+        if (not m_topics.contains(name)) {
+            topic_t topic;
 
-            0,
-            nullptr,
-            nullptr
-        );
+            // TODO: topic config
+            // TODO: multiple partitions
+
+            topic.partitions = std::unique_ptr<rd_kafka_topic_partition_list_t, caller<decltype(rd_kafka_topic_partition_list_destroy)>>(
+                rd_kafka_topic_partition_list_new(1),
+                rd_kafka_topic_partition_list_destroy
+            );
+
+            topic.handle = std::unique_ptr<rd_kafka_topic_t, caller<decltype(rd_kafka_topic_destroy)>>(
+                rd_kafka_topic_new(m_producer.get(), name.c_str(), nullptr),
+                rd_kafka_topic_destroy
+            );
+
+            nova_assert(topic.handle != nullptr);
+
+            rd_kafka_topic_partition_list_add(topic.partitions.get(), name.c_str(), RD_KAFKA_PARTITION_UA);
+            m_topics[name] = std::move(topic);
+        }
+
+        return m_topics[name].handle.get();
+    }
+
+    auto send_impl(const dsp::message& msg) -> rd_kafka_resp_err_t {
+        rd_kafka_resp_err_t err;
+        if (not msg.properties.empty()) {
+            rd_kafka_headers_t* headers = rd_kafka_headers_new(msg.properties.size());
+
+            for (const auto& [k, v] : msg.properties) {
+                // TODO(error): RD_KAFKA_RESP_ERR__READ_ONLY if the headers are read-only, else RD_KAFKA_RESP_ERR_NO_ERROR
+                // Does this error matter anyway?
+                rd_kafka_header_add(headers, k.c_str(), static_cast<long>(k.size()), v.c_str(), static_cast<long>(v.size()));
+            }
+
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wold-style-cast"
+
+            err = rd_kafka_producev(
+                m_producer.get(),
+                RD_KAFKA_V_RKT(topic(msg.subject)),
+                RD_KAFKA_V_PARTITION(RD_KAFKA_PARTITION_UA),
+                RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
+                RD_KAFKA_V_VALUE(reinterpret_cast<void*>(const_cast<std::byte*>(msg.payload.data())), msg.payload.size()),
+                RD_KAFKA_V_KEY(reinterpret_cast<void*>(const_cast<std::byte*>(msg.key.data())), msg.key.size()),
+                RD_KAFKA_V_HEADERS(headers),
+                RD_KAFKA_V_END
+            );
+
+            #pragma GCC diagnostic pop
+
+            if (err) {
+                rd_kafka_headers_destroy(headers);
+            }
+        } else {
+            rd_kafka_produce(
+                topic(msg.subject),
+                RD_KAFKA_PARTITION_UA,
+                RD_KAFKA_MSG_F_COPY,
+                reinterpret_cast<void*>(const_cast<std::byte*>(msg.payload.data())),
+                msg.payload.size(),
+                reinterpret_cast<const void*>(msg.key.data()),
+                msg.key.size(),
+                NULL
+            );
+            err = rd_kafka_last_error();
+        }
+
+        return err;
     }
 
 };

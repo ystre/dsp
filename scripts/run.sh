@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 
+export COLOR_DEF='\033[0m'
+export COLOR_RED='\033[1;31m'
+export COLOR_GREEN='\033[1;32m'
+
 set -euo pipefail
 
-G_SCRIPT_DIR="$(realpath "${0%%/*}")"
+G_SCRIPT_DIR="$(realpath "${0%/*}")"
 G_PROJECT_DIR=$(git -C "${G_SCRIPT_DIR}" rev-parse --show-toplevel)
 G_BUILD_DIR="${G_PROJECT_DIR}/build"
+
+STATUS_CODE=0
 
 function usage() {
     >&2 cat << EOF
@@ -56,8 +62,14 @@ function main() {
             exit 1
         fi
 
-        stage-entry
+        if ! stage-entry; then
+            msg "${COLOR_RED}Stage \`${stage}\` failed${COLOR_DEF}"
+            STATUS_CODE=1
+        fi
+        trap - exit
     done
+
+    return ${STATUS_CODE}
 }
 
 parse_args "$@"
