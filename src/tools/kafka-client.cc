@@ -95,23 +95,23 @@ auto produce(const po::variables_map& args) {
 }
 
 auto consume([[maybe_unused]] const po::variables_map& args) {
-    // const auto broker = args["broker"].as<std::string>();
-    // const auto group_id = args["group-id"].as<std::string>();
-    // const auto topic = args["topic"].as<std::string>();
-    // const auto batch_size = args["batch-size"].as<std::size_t>();
+    const auto broker = args["broker"].as<std::string>();
+    const auto group_id = args["group-id"].as<std::string>();
+    const auto topic = args["topic"].as<std::string>();
+    const auto batch_size = args["batch-size"].as<std::size_t>();
 
-    // auto cfg = dsp::kf_rdcpp::properties{};
-    // cfg.bootstrap_server(broker);
-    // cfg.group_id(group_id);
-    // cfg.offset_earliest();
+    auto cfg = dsp::kf::properties{};
+    cfg.bootstrap_server(broker);
+    cfg.group_id(group_id);
+    cfg.offset_earliest();
 
-    // auto spinner = dsp::spinner{ };
-    // spinner.set_prefix("Messages consumed");
+    auto spinner = dsp::spinner{ };
+    spinner.set_prefix("Messages consumed");
 
-    // auto stat = statistics{ };
+    auto stat = statistics{ };
 
-    // auto consumer = dsp::kf_rdcpp::consumer{ std::move(cfg) };
-    // consumer.subscribe(topic);
+    auto consumer = dsp::kf::consumer{ std::move(cfg) };
+    consumer.subscribe(topic);
 
     // while (g_sigint == 0) {
         // for (const auto& message : consumer.consume(batch_size)) {
