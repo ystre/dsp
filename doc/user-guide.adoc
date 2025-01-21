@@ -68,7 +68,7 @@ NOTE: stub section
 
 === Southbound Interfaces
 
-Southbound interfaces use __Handlers__. They define what and how to process.
+Southbound interfaces use _Handlers_. They define what and how to process.
 
 Handlers are created by factories. For example, each TCP connection creates its
 own handler via the factory.
@@ -115,7 +115,7 @@ NOTE: TODO: example code in the library
 
 === Daemon
 
-There is a __Daemon__ running on the main thread which makes sure that the main
+There is a _Daemon_ running on the main thread which makes sure that the main
 thread does not fall off at the end of the code. `daemon::start()` must be
 called to ensure that the background threads are not automatically joined.
 
@@ -132,9 +132,9 @@ Receiving SIGINT twice calls immediately into `std::abort`, which is a
 **non-graceful** shutdown. It ensures that the program can be killed
 with keyboard interrupt.
 
-CAUTION: All __tasks__ on worker threads must make sure that upon joining the
+CAUTION: All _tasks_ on worker threads must make sure that upon joining the
 thread, the destructor stops all threads. Stopping tasks is the responsibility
-of the __Service__.
+of the _Service_.
 
 == Handlers
 
@@ -150,7 +150,7 @@ NOTE: Design Goal - Mutlithreading, tasks, synchronization
 
 == Runtime Framework
 
-The __Service__ integrates the various components into a usable unit. It can be
+The _Service_ integrates the various components into a usable unit. It can be
 constructed with a (YAML) configuration.
 
 TCP server is provided by the service out of the box which is available through

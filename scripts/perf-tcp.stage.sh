@@ -1,6 +1,6 @@
 BUILD_TYPE=Release
 BUILD_DIR="${G_PROJECT_DIR}/build/${BUILD_TYPE}"
-LOG_DIR=/tmp/dsp/perf-tcp
+LOG_DIR="${G_ARTIFACT_DIR}/perf-tcp"
 LOG_SVC="${LOG_DIR}/dsp-ft-svc.log"
 LOG_SIM="${LOG_DIR}/dsp-ft-sim.log"
 
@@ -19,17 +19,21 @@ function on-exit() {
 }
 
 function stage-entry() {
+    # TODO: Ports from configuration.
+    local service_address="localhost:7200"
+    local metrics_address="localhost:9555/metrics"
+
+    local report_path="${G_ARTIFACT_DIR}/tcp-perf.txt"
+
     mkdir --parent "${LOG_DIR}"
-    rm --force "${LOG_SVC}"
-    rm --force "${LOG_SIM}"
+    rm --force "${LOG_SVC}" "${LOG_SIM}" "${report_path}"
 
     "${BUILD_DIR,,}/src/svc/svc" > "${LOG_SVC}" 2>&1&
     sleep 1     # TODO(feat): Reconnect support in simulator.
-    "${BUILD_DIR,,}/src/svc/sim" --address localhost:7200 > "${LOG_SIM}" 2>&1&
-    "${BUILD_DIR,,}/src/tools/tcp-client" --address localhost:7200 --count 20000000 --size 200 --batch 10
+    "${BUILD_DIR,,}/src/svc/sim" --address "${service_address}" > "${LOG_SIM}" 2>&1&
+    "${BUILD_DIR,,}/src/tools/tcp-client" --address "${service_address}" --count 20000000 --size 200 --batch 10
 
-    # TODO: Ports from configuration.
-    metrics=$(curl --silent localhost:9555/metrics | ag -v '^#')
+    metrics=$(curl --silent "${metrics_address}" | grep --invert-match -E '^#')
 
     pkill --signal SIGINT --exact sim
     pkill --signal SIGINT --exact svc
@@ -39,8 +43,10 @@ function stage-entry() {
     msg "Test results"
 
     msg "Speed test:"
-    grep --color=never --only-matching "Summary:.*" "${LOG_SVC}"
+    grep --color=never --only-matching "Summary:.*" "${LOG_SVC}" | tee --append "${report_path}"
 
     msg "Metrics:"
-    echo "${metrics}"
+    echo "${metrics}" | tee --append "${report_path}"
+
+    msg "Report has been created in: ${report_path}"
 }
