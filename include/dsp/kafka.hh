@@ -23,13 +23,14 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace dsp::kf {
 
 template <typename Func>
-struct caller {
-    caller(Func fn)
+struct deleter {
+    deleter(Func fn)
         : m_fn(fn)
     {}
 
@@ -312,7 +313,7 @@ public:
         auto config = m_props.create();
 
         char errstr[detail::ErrorMsgLength];
-        m_producer = std::unique_ptr<rd_kafka_t, caller<decltype(rd_kafka_destroy)>>(
+        m_producer = std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>>(
             rd_kafka_new(RD_KAFKA_PRODUCER, config, errstr, sizeof(errstr)),
             rd_kafka_destroy
         );
@@ -432,13 +433,13 @@ public:
 
 private:
     properties m_props;
-    std::unique_ptr<rd_kafka_t, caller<decltype(rd_kafka_destroy)>> m_producer{ nullptr, rd_kafka_destroy };
+    std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>> m_producer{ nullptr, rd_kafka_destroy };
     std::jthread m_poll_thread;
     std::atomic_bool m_keep_alive = true;
 
     struct topic_t {
-        std::unique_ptr<rd_kafka_topic_partition_list_t, caller<decltype(rd_kafka_topic_partition_list_destroy)>> partitions{ nullptr, rd_kafka_topic_partition_list_destroy };
-        std::unique_ptr<rd_kafka_topic_t, caller<decltype(rd_kafka_topic_destroy)>> handle{ nullptr, rd_kafka_topic_destroy };
+        std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>> partitions{ nullptr, rd_kafka_topic_partition_list_destroy };
+        std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>> handle{ nullptr, rd_kafka_topic_destroy };
     };
 
     using topics_t = std::map<std::string, topic_t>;
@@ -456,12 +457,12 @@ private:
             // TODO: topic config
             // TODO: multiple partitions
 
-            topic.partitions = std::unique_ptr<rd_kafka_topic_partition_list_t, caller<decltype(rd_kafka_topic_partition_list_destroy)>>(
+            topic.partitions = std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>>(
                 rd_kafka_topic_partition_list_new(1),
                 rd_kafka_topic_partition_list_destroy
             );
 
-            topic.handle = std::unique_ptr<rd_kafka_topic_t, caller<decltype(rd_kafka_topic_destroy)>>(
+            topic.handle = std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>>(
                 rd_kafka_topic_new(m_producer.get(), name.c_str(), nullptr),
                 rd_kafka_topic_destroy
             );
@@ -521,6 +522,141 @@ private:
 
         return err;
     }
+
+};
+
+/**
+ * @brief   Consumed message. Thin wrapper around the message pointer.
+ */
+class message {
+public:
+    message(rd_kafka_message_t* message_ptr)
+        : m_message_ptr(message_ptr)
+    {}
+
+    message(const message&)            = delete;
+    message& operator=(const message&) = delete;
+
+    message(message&& rhs) {
+        m_message_ptr = rhs.m_message_ptr;
+        rhs.m_message_ptr = nullptr;
+    }
+
+    message& operator=(message&& rhs) {
+        m_message_ptr = rhs.m_message_ptr;
+        rhs.m_message_ptr = nullptr;
+        return *this;
+    }
+
+    ~message() {
+        if (m_message_ptr != nullptr) {
+            rd_kafka_message_destroy(m_message_ptr);
+        }
+    }
+
+    [[nodiscard]] auto key() const -> std::string_view {
+        return { reinterpret_cast<const char*>(m_message_ptr->key), m_message_ptr->key_len };
+    }
+
+    [[nodiscard]] auto payload() const -> std::string_view {
+        return { reinterpret_cast<const char*>(m_message_ptr->payload), m_message_ptr->len };
+    }
+
+    [[nodiscard]] auto topic() const -> std::string {
+        return rd_kafka_topic_name(m_message_ptr->rkt);
+    }
+
+    [[nodiscard]] auto partition() const -> std::int32_t {
+        return m_message_ptr->partition;
+    }
+
+    [[nodiscard]] auto offset() const -> std::int64_t {
+        return m_message_ptr->offset;
+    }
+
+private:
+    rd_kafka_message_t* m_message_ptr;
+
+};
+
+class consumer {
+public:
+
+    /**
+     * @brief   Create a Kafka consumer
+     */
+    consumer(properties props)
+        : m_props(std::move(props))
+    {
+        auto config = m_props.create();
+
+        char errstr[detail::ErrorMsgLength];
+        m_consumer = std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>>(
+            rd_kafka_new(RD_KAFKA_CONSUMER, config, errstr, sizeof(errstr)),
+            rd_kafka_destroy
+        );
+
+        if (m_consumer == nullptr) {
+            throw nova::exception("Failed to create consumer: {}", errstr);
+        }
+
+        rd_kafka_poll_set_consumer(m_consumer.get());
+    }
+
+    consumer(const consumer&)               = delete;
+    consumer(consumer&&)                    = delete;
+    consumer& operator=(const consumer&)    = delete;
+    consumer& operator=(consumer&&)         = delete;
+
+    ~consumer() {
+        // TODO: Returns rd_kafka_resp_err_t
+        rd_kafka_unsubscribe(m_consumer.get());
+        nova::topic_log::info("kafka", "Stopping Kafka...");
+    }
+
+    auto subscribe(const std::vector<std::string>& topics) {
+        rd_kafka_topic_partition_list_t *subscription = rd_kafka_topic_partition_list_new(static_cast<int>(topics.size()));
+        for (const auto& topic : topics) {
+            rd_kafka_topic_partition_list_add(subscription, topic.c_str(), RD_KAFKA_PARTITION_UA);      // Partition is ignored by subscribe().
+        }
+
+        rd_kafka_resp_err_t err = rd_kafka_subscribe(m_consumer.get(), subscription);
+        if (err) {
+            rd_kafka_topic_partition_list_destroy(subscription);
+            THROWUP;        // TODO: Return a proper error.
+        }
+
+        rd_kafka_topic_partition_list_destroy(subscription);
+    }
+
+    auto subscribe(const std::string& topic) {
+        return subscribe(std::vector<std::string>{ topic });
+    }
+
+    auto consume(std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) -> std::optional<message> {
+        rd_kafka_message_t* message_ptr = rd_kafka_consumer_poll(m_consumer.get(), static_cast<int>(timeout.count()));
+        if (message_ptr == nullptr) {
+            return std::nullopt;
+        }
+
+        if (message_ptr->err) {
+            nova::topic_log::error("kafka", "Consumer error: {}", rd_kafka_err2str(message_ptr->err));
+        }
+
+        return message{ message_ptr };
+    }
+
+private:
+    properties m_props;
+    std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>> m_consumer{ nullptr, rd_kafka_destroy };
+
+    struct topic_t {
+        std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>> partitions{ nullptr, rd_kafka_topic_partition_list_destroy };
+        std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>> handle{ nullptr, rd_kafka_topic_destroy };
+    };
+
+    using topics_t = std::map<std::string, topic_t>;
+    topics_t m_topics;
 
 };
 
