@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace dsp::kf {
@@ -524,6 +525,60 @@ private:
 
 };
 
+/**
+ * @brief   Consumed message. Thin wrapper around the message pointer.
+ */
+class message {
+public:
+    message(rd_kafka_message_t* message_ptr)
+        : m_message_ptr(message_ptr)
+    {}
+
+    message(const message&)            = delete;
+    message& operator=(const message&) = delete;
+
+    message(message&& rhs) {
+        m_message_ptr = rhs.m_message_ptr;
+        rhs.m_message_ptr = nullptr;
+    }
+
+    message& operator=(message&& rhs) {
+        m_message_ptr = rhs.m_message_ptr;
+        rhs.m_message_ptr = nullptr;
+        return *this;
+    }
+
+    ~message() {
+        if (m_message_ptr != nullptr) {
+            rd_kafka_message_destroy(m_message_ptr);
+        }
+    }
+
+    [[nodiscard]] auto key() const -> std::string_view {
+        return { reinterpret_cast<const char*>(m_message_ptr->key), m_message_ptr->key_len };
+    }
+
+    [[nodiscard]] auto payload() const -> std::string_view {
+        return { reinterpret_cast<const char*>(m_message_ptr->payload), m_message_ptr->len };
+    }
+
+    [[nodiscard]] auto topic() const -> std::string {
+        return rd_kafka_topic_name(m_message_ptr->rkt);
+    }
+
+    [[nodiscard]] auto partition() const -> std::int32_t {
+        return m_message_ptr->partition;
+    }
+
+    [[nodiscard]] auto offset() const -> std::int64_t {
+        return m_message_ptr->offset;
+    }
+
+private:
+    rd_kafka_message_t* m_message_ptr;
+
+};
+
 class consumer {
 public:
 
@@ -544,6 +599,8 @@ public:
         if (m_consumer == nullptr) {
             throw nova::exception("Failed to create consumer: {}", errstr);
         }
+
+        rd_kafka_poll_set_consumer(m_consumer.get());
     }
 
     consumer(const consumer&)               = delete;
@@ -557,43 +614,37 @@ public:
         nova::topic_log::info("kafka", "Stopping Kafka...");
     }
 
-    auto subscribe(const std::vector<std::string>& topics) -> rd_kafka_resp_err_t {
-        std::vector<rd_kafka_topic_partition_list_t> topic_partition_lists(topics.size());
-
-        for (const auto& t : topics) {
-            topic(t);
-            topic_partition_lists.emplace_back(m_topics[t].partitions.operator*());
+    auto subscribe(const std::vector<std::string>& topics) {
+        rd_kafka_topic_partition_list_t *subscription = rd_kafka_topic_partition_list_new(static_cast<int>(topics.size()));
+        for (const auto& topic : topics) {
+            rd_kafka_topic_partition_list_add(subscription, topic.c_str(), RD_KAFKA_PARTITION_UA);      // Partition is ignored by subscribe().
         }
 
-        return rd_kafka_subscribe(m_consumer.get(), topic_partition_lists.data());
+        rd_kafka_resp_err_t err = rd_kafka_subscribe(m_consumer.get(), subscription);
+        if (err) {
+            rd_kafka_topic_partition_list_destroy(subscription);
+            THROWUP;        // TODO: Return a proper error.
+        }
+
+        rd_kafka_topic_partition_list_destroy(subscription);
     }
 
-    auto subscribe(const std::string& topic) -> rd_kafka_resp_err_t {
+    auto subscribe(const std::string& topic) {
         return subscribe(std::vector<std::string>{ topic });
     }
 
-    // auto consume(std::size_t batch_size = 1, std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) -> std::vector<kafka_record> {
-        // auto msgs = std::vector<kafka_record>();
-        // msgs.reserve(batch_size);
+    auto consume(std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) -> std::optional<message> {
+        rd_kafka_message_t* message_ptr = rd_kafka_consumer_poll(m_consumer.get(), static_cast<int>(timeout.count()));
+        if (message_ptr == nullptr) {
+            return std::nullopt;
+        }
 
-        // for (std::size_t i = 0; i < batch_size; ++i) {
-            // auto msg = kafka_record(m_consumer->consume(static_cast<int>(timeout.count())));
+        if (message_ptr->err) {
+            nova::topic_log::error("kafka", "Consumer error: {}", rd_kafka_err2str(message_ptr->err));
+        }
 
-            // nova_assert(msg != nullptr);
-            // switch (msg->err()) {
-                // case RdKafka::ERR_NO_ERROR:
-                    // msgs.push_back(std::move(msg));
-                    // break;
-                // case RdKafka::ERR__TIMED_OUT:
-                    // return msgs;
-                // default:
-                    // nova::topic_log::error("kafka", "Consumer error: {}", msg->errstr());
-                    // return msgs;
-            // }
-        // }
-
-        // return msgs;
-    // }
+        return message{ message_ptr };
+    }
 
 private:
     properties m_props;
@@ -607,36 +658,6 @@ private:
     using topics_t = std::map<std::string, topic_t>;
     topics_t m_topics;
 
-    /**
-     * @brief   Create a topic handle and cache it.
-     *
-     * TODO: Update metadata?
-     */
-    auto topic(const std::string& name) -> rd_kafka_topic_t* {
-        if (not m_topics.contains(name)) {
-            topic_t topic;
-
-            // TODO: topic config
-            // TODO: multiple partitions
-
-            topic.partitions = std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>>(
-                rd_kafka_topic_partition_list_new(1),
-                rd_kafka_topic_partition_list_destroy
-            );
-
-            topic.handle = std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>>(
-                rd_kafka_topic_new(m_consumer.get(), name.c_str(), nullptr),
-                rd_kafka_topic_destroy
-            );
-
-            nova_assert(topic.handle != nullptr);
-
-            rd_kafka_topic_partition_list_add(topic.partitions.get(), name.c_str(), RD_KAFKA_PARTITION_UA);
-            m_topics[name] = std::move(topic);
-        }
-
-        return m_topics[name].handle.get();
-    }
 };
 
 } // namespace dsp::kf

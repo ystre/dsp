@@ -92,38 +92,49 @@ auto produce(const po::variables_map& args) {
             );
         }
     }
+
+    // TODO: Summary metrics (even when it does not run for at least a second to
+    //       reach the periodic logging.
+    //
+    // Design philosophy: One executable for functional and performance testing.
 }
 
 auto consume([[maybe_unused]] const po::variables_map& args) {
     const auto broker = args["broker"].as<std::string>();
     const auto group_id = args["group-id"].as<std::string>();
     const auto topic = args["topic"].as<std::string>();
-    const auto batch_size = args["batch-size"].as<std::size_t>();
 
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
     cfg.group_id(group_id);
     cfg.offset_earliest();
 
-    auto spinner = dsp::spinner{ };
-    spinner.set_prefix("Messages consumed");
-
     auto stat = statistics{ };
 
     auto consumer = dsp::kf::consumer{ std::move(cfg) };
     consumer.subscribe(topic);
 
-    // while (g_sigint == 0) {
-        // for (const auto& message : consumer.consume(batch_size)) {
-            // stat.observe(message->len());       // TODO: full message size
-            // spinner.set_message(stat.to_string());
-            // spinner.tick();
-        // }
-        // spinner.tick();
-    // }
+    nova::topic_log::info("kafka", "Subscribed to: {}", topic);
 
-    // spinner.set_prefix("Finished");
-    // spinner.finish();
+    while (g_sigint == 0) {
+        const auto message = consumer.consume();
+        if (not message.has_value()) {
+            nova::topic_log::debug("kafka", "No message, polling...");
+            continue;
+        }
+
+        stat.observe(message->payload().size());        // TODO: full message size
+
+        nova::topic_log::info(
+            "kafka",
+            "Message consumed: {} [{}] at offset {}  key={} payload={}",
+            message->topic(),
+            message->partition(),
+            message->offset(),
+            message->key(),
+            message->payload()
+        );
+    }
 }
 
 auto parse_args_produce(const std::vector<std::string>& subargs)
@@ -162,7 +173,6 @@ auto parse_args_consume(const std::vector<std::string>& subargs)
         ("broker,b", po::value<std::string>()->required(), "Address of the Kafka broker")
         ("topic,t", po::value<std::string>()->required(), "Topic name")
         ("group-id,g", po::value<std::string>(), "Group ID")
-        ("batch-size,s", po::value<std::size_t>(), "Consuming batch size")
         ("help,h", "Show this help message")
     ;
 
