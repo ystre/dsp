@@ -1,10 +1,22 @@
 = Test Guide
 
-The following scripts are provided for testing:
-* `scripts/test.sh` for compilation and unit testing.
-* `scripts/ft.sh` for functional testing.
+The project uses a custom _stage runner_, `scripts/run.sh`. It is a CI-like
+workflow that can be run on any machine.
+
+The following utilities are used by the stages:
+
+* `asciidoc` (https://github.com/asciidoc-py/asciidoc-py)
+* `baldr` (https://github.com/ystre/baldr)
+* `docker compose`
+* `docker`
+* `jq` (https://github.com/jqlang/jq)
+* `kcat` (https://github.com/edenhill/kcat)
+* `keytool`
+* `yq` (https://github.com/kislyuk/yq)
 
 = Test Specification
+
+Note, this is only a design, test cases are to be implemented _Soon_ (TM).
 
 == Runtime Framework
 
