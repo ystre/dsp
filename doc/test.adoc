@@ -6,9 +6,11 @@ workflow that can be run on any machine.
 The following utilities are used by the stages:
 
 * `asciidoc` (https://github.com/asciidoc-py/asciidoc-py)
+* `bc` (Arbitrary precision calculator)
 * `baldr` (https://github.com/ystre/baldr)
 * `docker compose`
 * `docker`
+* `inxi` (System information tool)
 * `jq` (https://github.com/jqlang/jq)
 * `kcat` (https://github.com/edenhill/kcat)
 * `keytool`

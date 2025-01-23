@@ -79,6 +79,7 @@ auto produce(const po::variables_map& args) {
     };
 
     auto stat = statistics{ };
+    auto timer = nova::stopwatch();
 
     for (int i = 0; i < count; ++i) {
         producer.try_send(message);
@@ -92,6 +93,22 @@ auto produce(const po::variables_map& args) {
             );
         }
     }
+
+    producer.flush(5s);
+
+    const auto elapsed = nova::to_sec(timer.elapsed());
+    const auto mbps = static_cast<double>(stat.n_bytes()) / elapsed;
+    const auto mps = static_cast<double>(stat.n_messages()) / elapsed;
+
+    // TODO(refact): Create a function the does formatting for a consistent style.
+    nova::topic_log::info(
+        "kafka",
+        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",
+        mbps / nova::units::constants::MByte,
+        mps / nova::units::constants::kilo,
+        elapsed
+    );
+
 }
 
 auto consume([[maybe_unused]] const po::variables_map& args) {

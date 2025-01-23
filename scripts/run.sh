@@ -62,6 +62,7 @@ function list-stages() {
     local stages
     mapfile -t stages < <(find "${G_PROJECT_DIR}/scripts" -name '*.stage.sh')
 
+    local stage
     # shellcheck disable=SC2068 # Commands are single "words", so they can be safely split
     for stage in ${stages[@]}; do
         msg "${stage##*/}"
@@ -71,6 +72,13 @@ function list-stages() {
 function run-stage() {
     local stage="${1}"
 
+    local start_time
+    local finish_time
+    local stage_time
+    local exit_code
+
+    start_time=$(date +%s.%N)
+
     # shellcheck source=/dev/null
     if ! source "${G_PROJECT_DIR}/scripts/${stage}.stage.sh"; then
         msg "Failed to load stage \`${stage}\`"!
@@ -78,15 +86,25 @@ function run-stage() {
     fi
 
     msg "${COLOR_LIGHT_BLUE}Stage \`${stage}\`${COLOR_DEF}"
+
     if ! stage-entry; then
-        msg "${COLOR_RED}Stage \`${stage}\` failed${COLOR_DEF}"
+        exit_code=1
+    else
+        exit_code=0
+    fi
+
+    finish_time=$(date +%s.%N)
+    stage_time="$(bc -l <<< "scale=3; (${finish_time} - ${start_time}) / 1") sec(s)"
+
+    if [[ ${exit_code} -ne 0 ]]; then
+        msg "${COLOR_RED}Stage \`${stage}\` failed${COLOR_DEF} after ${stage_time}"
         STATUS_CODE=1
     else
         if [[ "${INTERRUPTED}" -eq 1 ]]; then
-            msg "${COLOR_YELLOW}Stage \`${stage}\` interrupted${COLOR_DEF}"
+            msg "${COLOR_YELLOW}Stage \`${stage}\` interrupted${COLOR_DEF} after ${stage_time}"
             exit 2
         else
-            msg "${COLOR_BLUE}Stage \`${stage}\` finished successfully${COLOR_DEF}"
+            msg "${COLOR_BLUE}Stage \`${stage}\` finished successfully${COLOR_DEF} after ${stage_time}"
         fi
     fi
     trap - exit

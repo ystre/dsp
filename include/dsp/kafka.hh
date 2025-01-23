@@ -351,7 +351,7 @@ public:
      *
      * @returns false if it timed out.
      */
-    [[nodiscard]] auto flush(std::chrono::milliseconds timeout) -> bool {
+    auto flush(std::chrono::milliseconds timeout) -> bool {
         return rd_kafka_flush(m_producer.get(), static_cast<int>(timeout.count()))
             != RD_KAFKA_RESP_ERR__TIMED_OUT;
     }
