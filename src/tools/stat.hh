@@ -58,7 +58,7 @@ public:
         return false;
     }
 
-    auto to_string() const -> std::string {
+    [[nodiscard]] auto to_string() const -> std::string {
         return fmt::format(
             "{:.2f} MBps  "
             "{:.2f}k MPS "
@@ -71,6 +71,9 @@ public:
             m_sys_stats.rss
         );
     }
+
+    [[nodiscard]] auto n_messages() const { return m_total_messages; }
+    [[nodiscard]] auto n_bytes()    const { return m_total_bytes; }
 
 private:
     dsp::system_info m_sys;
