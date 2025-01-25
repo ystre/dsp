@@ -79,12 +79,13 @@ auto produce(const po::variables_map& args) {
     };
 
     auto stat = statistics{ };
+    auto timer = nova::stopwatch();
 
     for (int i = 0; i < count; ++i) {
         producer.try_send(message);
         if (stat.observe(message.payload.size())) {     // TODO: full message size, potentially from delivery handler
             nova::topic_log::info(
-                "kafka",
+                "perf",
                 "Messages sent {} (dropped: {}) -- {}",
                 metrics->n_sent_messages,
                 metrics->n_drop_messages,
@@ -93,10 +94,22 @@ auto produce(const po::variables_map& args) {
         }
     }
 
-    // TODO: Summary metrics (even when it does not run for at least a second to
-    //       reach the periodic logging.
-    //
-    // Design philosophy: One executable for functional and performance testing.
+    if (not producer.flush(5s)) {
+        nova::topic_log::warn("perf", "Flush timed out");
+    }
+
+    const auto elapsed = nova::to_sec(timer.elapsed());
+    const auto mbps = static_cast<double>(stat.n_bytes()) / elapsed;
+    const auto mps = static_cast<double>(stat.n_messages()) / elapsed;
+
+    // TODO(refact): Create a function the does formatting for a consistent style.
+    nova::topic_log::info(
+        "perf",
+        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",
+        mbps / nova::units::constants::MByte,
+        mps / nova::units::constants::kilo,
+        elapsed
+    );
 }
 
 auto consume([[maybe_unused]] const po::variables_map& args) {
@@ -230,7 +243,7 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
 }
 
 auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
-    nova::log::init("kafka");
+    nova::log::init("perf");
 
     [[maybe_unused]] auto sig = dsp::signal_handler{ };
     const auto client = args["command"].as<std::string>();

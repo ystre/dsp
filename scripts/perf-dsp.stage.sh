@@ -1,8 +1,9 @@
 BUILD_TYPE=Release
 BUILD_DIR="${G_PROJECT_DIR}/build/${BUILD_TYPE}"
-LOG_DIR="${G_ARTIFACT_DIR}/perf-tcp-kafka-producer"
-LOG_SVC="${LOG_DIR}/dsp-ft-svc.log"
-LOG_SIM="${LOG_DIR}/dsp-ft-sim.log"
+LOG_DIR="${G_ARTIFACT_DIR}/perf-tests/dsp"
+LOG_SVC="${LOG_DIR}/svc.log"
+LOG_SIM="${LOG_DIR}/sim.log"
+REPORT_PATH="${G_REPORT_DIR}/dsp-perf.txt"
 
 trap on-exit exit
 
@@ -21,15 +22,13 @@ function stage-entry() {
     local broker="localhost:9092"
     local service_address="localhost:7200"
     local metrics_address="localhost:9555/metrics"
-    local topic_name="dsp-perf-test"
+    local topic_name="dev-test"
 
-    local report_path="${G_ARTIFACT_DIR}/dsp-perf.txt"
-
-    dsp_config_src="${G_PROJECT_DIR}/res/dsp.yaml"
-    tmp_config="$(mktemp)"
+    local dsp_config_src="${G_PROJECT_DIR}/res/dsp.yaml"
+    local tmp_config="$(mktemp)"
 
     mkdir --parent "${LOG_DIR}"
-    rm --force "${LOG_SVC}" "${LOG_SIM}" "${report_path}"       # TODO(design): Global vs. local variables.
+    rm --force "${LOG_SVC}" "${LOG_SIM}" "${REPORT_PATH}"       # TODO(design): Global vs. local variables.
 
     yq --yaml-output '.dsp.interfaces.northbound.enabled=true' "${dsp_config_src}" > "${tmp_config}"
     msg "Configuration is saved to: \`${tmp_config}\`"
@@ -47,13 +46,13 @@ function stage-entry() {
     msg "Test results"
 
     msg "Speed test:"
-    grep --color=never --only-matching "Summary:.*" "${LOG_SVC}" | tee --append "${report_path}"
+    grep --color=never --only-matching "Summary:.*" "${LOG_SVC}" | tee --append "${REPORT_PATH}"
 
     msg "Metrics:"
-    echo "${metrics}" | tee --append "${report_path}"
+    echo "${metrics}" | tee --append "${REPORT_PATH}"
 
     # TODO: Topic name from configuration.
     docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server "${broker}" --topic "${topic_name}" --delete
 
-    msg "Report has been created in: ${report_path}"
+    msg "Report has been saved to: ${REPORT_PATH}"
 }

@@ -9,12 +9,11 @@ Example codes in documentation can be run with `./scripts/rundoc.sh`.
 
 All code blocks can be dumped via `./scripts/dump-code-blocks.sh`.
 
-Automated testing can be run with `./scripts/run.sh`.
+Automated testing can be run with `./scripts/run.sh all`.
 
 [source,bash]
 ----
 ./scripts/rundoc.sh devenv create-container build-in-container
-./scripts/run.sh clean build unit-test cert deps ft-kafka-producer perf-tcp perf-kafka-producer perf-dsp doc
 ----
 
 include::user-guide.adoc[leveloffset=+1]

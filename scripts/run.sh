@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# TODO: Several errors are swallowed inside the stage functions.
+
 set -euo pipefail
 
 export COLOR_DEF='\033[0m'
@@ -11,8 +13,9 @@ export COLOR_BLUE='\033[0;34m'
 
 G_SCRIPT_DIR="$(realpath "${0%/*}")"
 G_PROJECT_DIR=$(git -C "${G_SCRIPT_DIR}" rev-parse --show-toplevel)
-G_ARTIFACT_DIR="${G_PROJECT_DIR}/.tmp"
 G_BUILD_DIR="${G_PROJECT_DIR}/build"
+G_ARTIFACT_DIR="${G_PROJECT_DIR}/.tmp"
+G_REPORT_DIR="${G_ARTIFACT_DIR}/reports"
 
 STATUS_CODE=0
 INTERRUPTED=0
@@ -62,14 +65,29 @@ function list-stages() {
     local stages
     mapfile -t stages < <(find "${G_PROJECT_DIR}/scripts" -name '*.stage.sh')
 
+    local stage
     # shellcheck disable=SC2068 # Commands are single "words", so they can be safely split
     for stage in ${stages[@]}; do
         msg "${stage##*/}"
     done
 }
 
+function init-stage() {
+    mkdir --parent \
+        "${G_ARTIFACT_DIR}" \
+        "${G_REPORT_DIR}" \
+        "${G_BUILD_DIR}"
+}
+
 function run-stage() {
     local stage="${1}"
+
+    local start_time
+    local finish_time
+    local stage_time
+    local exit_code
+
+    start_time=$(date +%s.%N)
 
     # shellcheck source=/dev/null
     if ! source "${G_PROJECT_DIR}/scripts/${stage}.stage.sh"; then
@@ -78,21 +96,33 @@ function run-stage() {
     fi
 
     msg "${COLOR_LIGHT_BLUE}Stage \`${stage}\`${COLOR_DEF}"
+
     if ! stage-entry; then
-        msg "${COLOR_RED}Stage \`${stage}\` failed${COLOR_DEF}"
+        exit_code=1
+    else
+        exit_code=0
+    fi
+
+    finish_time=$(date +%s.%N)
+    stage_time="$(bc -l <<< "scale=3; (${finish_time} - ${start_time}) / 1") sec(s)"
+
+    if [[ ${exit_code} -ne 0 ]]; then
+        msg "${COLOR_RED}Stage \`${stage}\` failed${COLOR_DEF} after ${stage_time}"
         STATUS_CODE=1
     else
         if [[ "${INTERRUPTED}" -eq 1 ]]; then
-            msg "${COLOR_YELLOW}Stage \`${stage}\` interrupted${COLOR_DEF}"
+            msg "${COLOR_YELLOW}Stage \`${stage}\` interrupted${COLOR_DEF} after ${stage_time}"
             exit 2
         else
-            msg "${COLOR_BLUE}Stage \`${stage}\` finished successfully${COLOR_DEF}"
+            msg "${COLOR_BLUE}Stage \`${stage}\` finished successfully${COLOR_DEF} after ${stage_time}"
         fi
     fi
     trap - exit
 }
 
 function main() {
+    init-stage
+
     # shellcheck disable=SC2068 # Commands are single "words", so they can be safely split
     for stage in ${stages[@]}; do
         run-stage "${stage}"
