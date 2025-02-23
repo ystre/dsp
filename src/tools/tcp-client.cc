@@ -7,6 +7,7 @@
 #include "stat.hh"
 
 #include <dsp/tcp.hh>
+#include <dsp/token_bucket.hh>
 #include <dsp/sys.hh>
 
 #include <nova/data.hh>
@@ -30,7 +31,8 @@ namespace po = boost::program_options;
 struct config {
     std::size_t count;
     std::size_t batch_size;
-    std::size_t rate_limit;
+    long rate_limit;
+    bool non_blocking;
 };
 
 /**
@@ -96,6 +98,7 @@ auto serialize(const message_t& msg) -> nova::bytes {
 auto send(const std::string& address, const nova::bytes& message, const config& cfg) {
     auto client = dsp::tcp::client{ };
     client.connect(address);
+    client.non_blocking(cfg.non_blocking);
 
     auto spinner = dsp::spinner{ };
     spinner.max_iterations(static_cast<std::size_t>(cfg.count));
@@ -104,8 +107,13 @@ auto send(const std::string& address, const nova::bytes& message, const config& 
     auto stat = statistics{ };
     const auto n = cfg.count / cfg.batch_size;
 
+    auto tokens = dsp::token_bucket{ cfg.rate_limit, static_cast<double>(cfg.rate_limit) };
+
     try {
         for (std::size_t i = 0; i < n; ++i) {
+            // TODO(feat): Reconnect.
+
+            tokens.take(static_cast<long>(cfg.batch_size));
             const auto resp = client.send(nova::data_view{ message });
             stat.observe(message.size(), cfg.batch_size);
             spinner.set_message(stat.to_string());
@@ -129,7 +137,8 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
         ("count,c", po::value<std::size_t>()->required(), "Number of messages to send")
         ("size,s", po::value<std::uint16_t>()->required(), "The size of the messages to send (Max size: 65 533")
         ("batch,b", po::value<std::size_t>()->default_value(1), "Size of the batches")
-        ("rate-limit", po::value<std::size_t>()->default_value(0), "Rate limiting (MPS)")
+        ("rate-limit", po::value<long>()->default_value(0), "Rate limiting (MPS)")
+        ("non-blocking", po::value<bool>()->default_value(false), "Whether TCP send is blocking or not")
         ("help,h", "Show this help message")
     ;
 
@@ -154,10 +163,11 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     const auto address = args["address"].as<std::string>();
     const auto batch_size = args["batch"].as<std::size_t>();
     const auto count = args["count"].as<std::size_t>();
-    const auto rate_limit = args["rate-limit"].as<std::size_t>();
+    const auto rate_limit = args["rate-limit"].as<long>();
+    const auto non_blocking = args["non-blocking"].as<bool>();
 
     const auto message = batch(generate_data(size), batch_size);
-    send(address, message, config{ count, batch_size, rate_limit });
+    send(address, message, config{ count, batch_size, rate_limit, non_blocking });
 
     return EXIT_SUCCESS;
 }

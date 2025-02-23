@@ -202,6 +202,10 @@ client::client()
     : m_socket(m_io_context)
 {}
 
+void client::non_blocking(bool mode) {
+    m_socket.non_blocking(mode);
+}
+
 void client::connect(const net_config& cfg) {
     auto resolver = ::tcp::resolver{ m_io_context };
     ::tcp::resolver::results_type endpoints = resolver.resolve(cfg.host, std::to_string(cfg.port));

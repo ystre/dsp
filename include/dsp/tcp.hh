@@ -70,6 +70,7 @@ class client {
 public:
     client();
 
+    void non_blocking(bool mode);
     void connect(const net_config& cfg);
     void connect(const std::string& address);
     auto send(nova::data_view) -> nova::bytes;
