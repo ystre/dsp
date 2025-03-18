@@ -7,8 +7,8 @@
 #include "handler.hh"
 
 #include <dsp/dsp.hh>
-#include <dsp/kafka.hh>
 #include <dsp/http.hh>
+#include <dsp/kafka.hh>
 #include <dsp/router.hh>
 
 #include <nova/error.hh>

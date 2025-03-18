@@ -6,10 +6,10 @@
 
 #include <dsp/daemon.hh>
 #include <dsp/tcp.hh>
+#include <dsp/main.hh>
 
 #include <nova/data.hh>
 #include <nova/log.hh>
-#include <nova/main.hh>
 #include <nova/utils.hh>
 
 #pragma GCC diagnostic push
@@ -96,4 +96,4 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     return EXIT_SUCCESS;
 }
 
-NOVA_MAIN_ARG_PARSE(entrypoint, parse_args);
+DSP_MAIN_ARG_PARSE(entrypoint, parse_args);

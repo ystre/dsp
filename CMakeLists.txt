@@ -19,8 +19,9 @@ include(cmake/compiler-warnings.cmake)
 include(cmake/dependencies.cmake)
 include(cmake/settings.cmake)
 
-include(deps/nova-cpp/cmake/targets.cmake)
-include(cmake/targets.cmake)
+add_subdirectory(deps/nova-cpp/include)
+add_subdirectory(include)
+add_subdirectory(src)
 
 if(BUILD_TESTS)
     enable_testing()
