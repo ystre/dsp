@@ -1,6 +1,3 @@
-set(DSP_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
-add_subdirectory("${DSP_ROOT}/src")
-
 add_library(dsp-headers INTERFACE)
 
 file(GLOB_RECURSE DSP_HEADER_FILES "${CMAKE_CURRENT_LIST_DIR}/*.hh")
@@ -8,7 +5,7 @@ file(GLOB_RECURSE DSP_HEADER_FILES "${CMAKE_CURRENT_LIST_DIR}/*.hh")
 target_sources(dsp-headers
     PUBLIC
     FILE_SET HEADERS
-    BASE_DIRS "${DSP_ROOT}/include"
+    BASE_DIRS ${CMAKE_CURRENT_LIST_DIR}
     FILES
     ${DSP_HEADER_FILES}
 )
