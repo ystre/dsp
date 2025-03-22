@@ -57,19 +57,19 @@ public:
         : m_metrics(std::move(m))
     {}
 
-    void handle_error(const rd_kafka_message_t* message) override {
+    void handle_error(dsp::kf::message_view message) override {
         // logging::error("app", "Delivery error to [{}] ({})", message.topic_name(), message.errstr());
-        m_metrics->increment("drop_messages_total", 1,          { { "drop_type", "kafka_delivery" } });
-        m_metrics->increment("drop_bytes_total", message->len,  { { "drop_type", "kafka_delivery" } });
+        m_metrics->increment("drop_messages_total", 1,                      { { "drop_type", "kafka_delivery" } });
+        m_metrics->increment("drop_bytes_total", message.payload().size(),  { { "drop_type", "kafka_delivery" } });
     }
 
-    void handle_success(const rd_kafka_message_t* message) override {
+    void handle_success(dsp::kf::message_view message) override {
         // auto topic_name = message.topic_name();
         // boost::replace_all(topic_name, "-", "_");
 
         // logging::trace("app", "Kafka delivery success to {}", message.topic_name());
-        m_metrics->increment("sent_messages_total", 1,          { { "topic", "na" } });
-        m_metrics->increment("sent_bytes_total", message->len,  { { "topic", "na" } });
+        m_metrics->increment("sent_messages_total", 1,                      { { "topic", "na" } });
+        m_metrics->increment("sent_bytes_total", message.payload().size(),  { { "topic", "na" } });
     }
 
 private:

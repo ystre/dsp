@@ -1,4 +1,4 @@
-BUILD_TYPE=Release
+BUILD_TYPE=Debug
 BUILD_DIR="${G_PROJECT_DIR}/build/${BUILD_TYPE}"
 
 TEST_STATUS=0
@@ -11,14 +11,14 @@ function check() {
     if [[ "${actual}" == "${expected}" ]]; then
         msg "Check success: ${COLOR_GREEN}${description}${COLOR_DEF}"
     else
-        msg "Check failed: ${COLOR_RED}${description}${COLOR_DEF} (actual: \`${actual}\` | expected: \`${expected})\`"
+        msg "Check failed: ${COLOR_RED}${description}${COLOR_DEF} (actual: \`${actual}\` | expected: \`${expected}\`)"
         TEST_STATUS=1
     fi
 }
 
 function stage-entry() {
     local broker="localhost:9092"
-    local topic_name="ft-test"
+    local topic_name="ft-test-producer"
 
     "${BUILD_DIR,,}/src/tools/kafka-client" produce --broker "${broker}" --topic "${topic_name}" --count 1 --size 200
     messages=$(kcat -b "${broker}" -C -t "${topic_name}" -J -c 1)

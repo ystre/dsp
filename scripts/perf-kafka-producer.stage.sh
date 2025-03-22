@@ -7,7 +7,7 @@ function stage-entry() {
     local broker="localhost:9092"
     local topic_name="perf-test"
 
-    msg "Creating \`perf-test\` topic..."
+    msg "Creating \`${topic_name}\` topic..."
     docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server "${broker}" --topic "${topic_name}" --create --partitions 1 --config retention.ms=600000
 
     "${BUILD_DIR,,}/src/tools/kafka-client" produce \
