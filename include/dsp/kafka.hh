@@ -10,59 +10,187 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
 #include <dsp/cache.hh>
 
 #include <nova/error.hh>
+#include <nova/expected.hh>
 #include <nova/log.hh>
+#include <nova/utils.hh>
 
+#include <fmt/format.h>
 #include <librdkafka/rdkafka.h>
 
 #include <atomic>
 #include <chrono>
-#include <functional>
 #include <map>
 #include <memory>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 
 namespace dsp::kf {
 
-template <typename Func>
-struct deleter {
-    deleter(Func fn)
-        : m_fn(fn)
-    {}
+namespace detail {
 
-    template <typename T>
-    void operator()(T* obj) const {
-        m_fn(obj);
-    }
+    struct kafka_del     { void operator()(rd_kafka_t* ptr)                      { rd_kafka_destroy(ptr); } };
+    struct partition_del { void operator()(rd_kafka_topic_partition_list_t* ptr) { rd_kafka_topic_partition_list_destroy(ptr); } };
+    struct topic_del     { void operator()(rd_kafka_topic_t* ptr)                { rd_kafka_topic_destroy(ptr); } };
 
-private:
-    std::function<Func> m_fn;
-};
+    struct topic_t {
+        std::unique_ptr<rd_kafka_topic_partition_list_t, detail::partition_del> partitions { nullptr };
+        std::unique_ptr<rd_kafka_topic_t, detail::topic_del> handle { nullptr };
+    };
+
+    using topics_t = std::map<std::string, topic_t>;
+
+    /**
+     * @brief   A view for consumed message. A thin wrapper around the message pointer.
+     *
+     * Cannot be copied.
+     *
+     * It is templated on the pointer type, using its constness.
+     * - If the pointer is non-const, the view owns the underlying data.
+     * - If the pointer is const, the view does not own the underlying data.
+     *
+     * Consume returns the non-const variant, while delivery callback uses const.
+     *
+     * CAUTION: All accessors return a view of the underlying data (unless trivial
+     * types). No returned object should outlive the view that created them. Their
+     * content must be copied into persistent objects.
+     */
+    template <typename RdKafkaMessage>
+    class message_view {
+    public:
+        using header_map = std::unordered_map<const char*, nova::data_view>;
+
+        message_view(RdKafkaMessage* message_ptr)
+            : m_message_ptr(message_ptr)
+        {}
+
+        message_view(const message_view&)            = delete;
+        message_view& operator=(const message_view&) = delete;
+
+        message_view(message_view&& rhs) {
+            m_message_ptr = rhs.m_message_ptr;
+            rhs.m_message_ptr = nullptr;
+        }
+
+        message_view& operator=(message_view&& rhs) {
+            m_message_ptr = rhs.m_message_ptr;
+            rhs.m_message_ptr = nullptr;
+            return *this;
+        }
+
+        ~message_view() {
+            if constexpr (not std::is_const_v<RdKafkaMessage>) {
+                if (m_message_ptr != nullptr) {
+                    rd_kafka_message_destroy(m_message_ptr);
+                }
+            }
+        }
+
+        [[nodiscard]] auto ok() const -> bool {
+            return m_message_ptr->err == RD_KAFKA_RESP_ERR_NO_ERROR;
+        }
+
+        [[nodiscard]] auto eof() const -> bool {
+            return m_message_ptr->err == RD_KAFKA_RESP_ERR__PARTITION_EOF;
+        }
+
+        [[nodiscard]] auto key() const -> nova::data_view {
+            return { m_message_ptr->key, m_message_ptr->key_len };
+        }
+
+        [[nodiscard]] auto payload() const -> nova::data_view {
+            return { m_message_ptr->payload, m_message_ptr->len };
+        }
+
+        [[nodiscard]] auto topic() const -> std::string_view {
+            return rd_kafka_topic_name(m_message_ptr->rkt);
+        }
+
+        [[nodiscard]] auto partition() const -> std::int32_t {
+            return m_message_ptr->partition;
+        }
+
+        [[nodiscard]] auto offset() const -> std::int64_t {
+            return m_message_ptr->offset;
+        }
+
+        /**
+         * Note: Headers are associated with the message by librdkafka
+         */
+        [[nodiscard]] auto headers() const -> header_map {
+            header_map ret;
+            rd_kafka_headers_t* headers;
+
+            if (rd_kafka_message_headers(m_message_ptr, &headers) != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                return ret;
+            };
+
+            std::size_t index = 0;
+            const char* key;
+            const void* value;
+            std::size_t size;
+
+            while (rd_kafka_header_get_all(headers, index++, &key, &value, &size) == RD_KAFKA_RESP_ERR_NO_ERROR) {
+                ret.insert({ key, nova::data_view(value, size) });
+            }
+
+            return ret;
+        }
+
+        /**
+         * @brief   Accessing the underlying handle to the message.
+         *
+         * CAUTION: This exposes the low-level C-API for librdkafka.
+         *
+         * Working with headers can be costly. This is a way around this abstraction to
+         * squeeze the most performance out of processing consumed messages.
+         */
+        [[nodiscard]] auto ptr() -> RdKafkaMessage* {
+            return m_message_ptr;
+        }
+
+    private:
+        RdKafkaMessage* m_message_ptr;
+
+    };
+
+} // namespace detail
+
+/**
+ * @brief   Owning message view used for consumed messages.
+ */
+using message_view_owned = detail::message_view<rd_kafka_message_t>;
+
+/**
+ * @brief   Non-owning message view used by delivery handlers.
+ */
+using message_view = detail::message_view<const rd_kafka_message_t>;
 
 /**
  * @brief   An abstraction that hides C API and delegates to error and success handlers.
- *
- * TODO(design): Acutally hide the `rd_kafka_message_t` type from client code.
  */
 class delivery_handler {
 public:
-    void operator()(const rd_kafka_message_t* message) {
-        if (message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
-            handle_error(message);
+    void operator()(const rd_kafka_message_t* msg) {
+        if (msg->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+            handle_error(message_view{ msg });
         } else {
-            handle_success(message);
+            handle_success(message_view{ msg });
         }
     }
 
     virtual ~delivery_handler() = default;
 
 protected:
-    virtual void handle_error(const rd_kafka_message_t*) = 0;
-    virtual void handle_success(const rd_kafka_message_t*) = 0;
+    virtual void handle_error(message_view) = 0;
+    virtual void handle_success(message_view) = 0;
 };
 
 class throttle_handler {
@@ -75,6 +203,19 @@ class statistics_handler {
 public:
     virtual void operator()(const std::string& json_str) = 0;
     virtual ~statistics_handler() = default;
+};
+
+class rebalance_handler {
+public:
+    // TODO(feat): Finish rebalance callback API.
+    // virtual void operator()() = 0;
+    virtual void operator()(
+        rd_kafka_t* client,
+        rd_kafka_resp_err_t* err,
+        rd_kafka_topic_partition_list_t* partitions,
+        void* opaque) = 0;
+
+    virtual ~rebalance_handler() = default;
 };
 
 namespace detail {
@@ -96,6 +237,7 @@ namespace detail {
         std::unique_ptr<delivery_handler> delivery = nullptr;
         std::unique_ptr<throttle_handler> throttle = nullptr;
         std::unique_ptr<statistics_handler> statistics = nullptr;
+        std::unique_ptr<rebalance_handler> rebalance = nullptr;
     };
 
     /**
@@ -120,6 +262,9 @@ namespace detail {
         context->throttle->operator()(broker_name, std::chrono::milliseconds{ throttle_time_ms });
     }
 
+    /**
+     * @brief   Integrate Nova logging.
+     */
     inline void log_callback(
             [[maybe_unused]] const rd_kafka_t* client,
             int level,
@@ -141,11 +286,95 @@ namespace detail {
     }
 
     /**
+     * @brief   Trampoline function to call rebalance handler object.
+     *
+     * Currently this is an example code copy-pasta'd from librdkafka's performance example.
+     * Not in use.
+     *
+     * TODO(feat): Finish rebalance callback API.
+     */
+    inline void rebalance_callback(
+            rd_kafka_t* rk,
+            rd_kafka_resp_err_t err,
+            rd_kafka_topic_partition_list_t* partitions,
+            [[maybe_unused]] void* opaque)
+    {
+        rd_kafka_error_t *error     = NULL;
+        rd_kafka_resp_err_t ret_err = RD_KAFKA_RESP_ERR_NO_ERROR;
+
+        if (!strcmp(rd_kafka_rebalance_protocol(rk), "COOPERATIVE"))
+                fprintf(stderr,
+                        "%% This example has not been modified to "
+                        "support -e (exit on EOF) when "
+                        "partition.assignment.strategy "
+                        "is set to an incremental/cooperative strategy: "
+                        "-e will not behave as expected\n");
+
+        switch (err) {
+        case RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
+                fprintf(stderr,
+                        "%% Group rebalanced (%s): "
+                        "%d new partition(s) assigned\n",
+                        rd_kafka_rebalance_protocol(rk), partitions->cnt);
+
+                if (!strcmp(rd_kafka_rebalance_protocol(rk), "COOPERATIVE")) {
+                        error = rd_kafka_incremental_assign(rk, partitions);
+                } else {
+                        ret_err = rd_kafka_assign(rk, partitions);
+                }
+
+                // partition_cnt += partitions->cnt;
+                break;
+
+        case RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
+                fprintf(stderr,
+                        "%% Group rebalanced (%s): %d partition(s) revoked\n",
+                        rd_kafka_rebalance_protocol(rk), partitions->cnt);
+
+                if (!strcmp(rd_kafka_rebalance_protocol(rk), "COOPERATIVE")) {
+                        error = rd_kafka_incremental_unassign(rk, partitions);
+                        // partition_cnt -= partitions->cnt;
+                } else {
+                        ret_err       = rd_kafka_assign(rk, NULL);
+                        // partition_cnt = 0;
+                }
+
+                break;
+
+        default:
+                break;
+        }
+
+        if (error) {
+                fprintf(stderr, "%% incremental assign failure: %s\n",
+                        rd_kafka_error_string(error));
+                rd_kafka_error_destroy(error);
+        } else if (ret_err) {
+                fprintf(stderr, "%% assign failure: %s\n",
+                        rd_kafka_err2str(ret_err));
+        }
+    }
+
+    /**
      * @brief   Trampoline function to call statistics handler object.
      */
     inline int statistics_callback([[maybe_unused]] rd_kafka_t* client, char* json, size_t json_len, void* opaque) {
         auto* context = static_cast<callbacks_t*>(opaque);
         context->statistics->operator()(std::string{ json, json_len });
+        return 0;
+    }
+
+    /**
+     * @brief   Trampoline function to call rebalancer handler object.
+     */
+    inline int rebalance_callback(
+            [[maybe_unused]] rd_kafka_t* client,
+            rd_kafka_resp_err_t* err,
+            rd_kafka_topic_partition_list_t* partitions,
+            void* opaque)
+    {
+        auto* context = static_cast<callbacks_t*>(opaque);
+        context->rebalance->operator()(client, err, partitions, opaque);
         return 0;
     }
 
@@ -170,6 +399,7 @@ public:
     static constexpr auto GroupId = "group.id";
     static constexpr auto OffsetReset = "auto.offset.reset";
     static constexpr auto StatisticsInterval = "statistics.interval.ms";
+    static constexpr auto PartitionEof = "enable.partition.eof";
 
     /**
      * @brief   Set an arbitrary property.
@@ -215,6 +445,10 @@ public:
         m_cfg[OffsetReset] = "latest";
     }
 
+    void enable_partition_eof() {
+        m_cfg[PartitionEof] = "true";
+    }
+
     void delivery_callback(std::unique_ptr<delivery_handler> callback) {
         m_callbacks.delivery = std::move(callback);
     }
@@ -230,13 +464,15 @@ public:
     /**
      * @brief   Create RdKafka configuration object.
      */
-    auto create() {
+    auto create() -> rd_kafka_conf_t* {
         rd_kafka_conf_t* config = rd_kafka_conf_new();
         nova_assert(config != nullptr);
 
         set_basic_props(config);
         rd_kafka_conf_set_opaque(config, &m_callbacks);
         rd_kafka_conf_set_log_cb(config, detail::log_callback);
+        // TODO(feat): Finish rebalance callback API.
+        // rd_kafka_conf_set_rebalance_cb(config, detail::rebalance_callback);
 
         if (m_callbacks.delivery != nullptr) {
             set(config, detail::delivery_callback);
@@ -313,9 +549,8 @@ public:
         auto config = m_props.create();
 
         char errstr[detail::ErrorMsgLength];
-        m_producer = std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>>(
-            rd_kafka_new(RD_KAFKA_PRODUCER, config, errstr, sizeof(errstr)),
-            rd_kafka_destroy
+        m_producer = std::unique_ptr<rd_kafka_t, detail::kafka_del>(
+            rd_kafka_new(RD_KAFKA_PRODUCER, config, errstr, sizeof(errstr))
         );
 
         if (m_producer == nullptr) {
@@ -376,8 +611,9 @@ public:
      * @throws  if an unexpected error happens:
      *            - Message is larger than "messages.max.bytes"
      *            - Unknown partition or topic
+                  - `RD_KAFKA_RESP_ERR__READ_ONLY` if the headers are read-only
      */
-    void send(const message& msg) {
+    void send(const dsp::message& msg) {
         static constexpr auto PollTimeout  = std::chrono::milliseconds{ 100 };
 
         bool doit = true;
@@ -411,6 +647,7 @@ public:
      * @throws  if an unexpected error happens:
      *            - Message is larger than "messages.max.bytes"
      *            - Unknown partition or topic
+                  - `RD_KAFKA_RESP_ERR__READ_ONLY` if the headers are read-only
      */
     auto try_send(const dsp::message& msg) -> bool {
         const auto status = send_impl(msg);
@@ -433,17 +670,11 @@ public:
 
 private:
     properties m_props;
-    std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>> m_producer{ nullptr, rd_kafka_destroy };
+    std::unique_ptr<rd_kafka_t, detail::kafka_del> m_producer{ nullptr };
     std::jthread m_poll_thread;
     std::atomic_bool m_keep_alive = true;
 
-    struct topic_t {
-        std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>> partitions{ nullptr, rd_kafka_topic_partition_list_destroy };
-        std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>> handle{ nullptr, rd_kafka_topic_destroy };
-    };
-
-    using topics_t = std::map<std::string, topic_t>;
-    topics_t m_topics;
+    detail::topics_t m_topics;
 
     /**
      * @brief   Create a topic handle and cache it.
@@ -452,20 +683,13 @@ private:
      */
     auto topic(const std::string& name) -> rd_kafka_topic_t* {
         if (not m_topics.contains(name)) {
-            topic_t topic;
+            detail::topic_t topic;
 
             // TODO: topic config
             // TODO: multiple partitions
 
-            topic.partitions = std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>>(
-                rd_kafka_topic_partition_list_new(1),
-                rd_kafka_topic_partition_list_destroy
-            );
-
-            topic.handle = std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>>(
-                rd_kafka_topic_new(m_producer.get(), name.c_str(), nullptr),
-                rd_kafka_topic_destroy
-            );
+            topic.partitions = std::unique_ptr<rd_kafka_topic_partition_list_t, detail::partition_del>(rd_kafka_topic_partition_list_new(1));
+            topic.handle = std::unique_ptr<rd_kafka_topic_t, detail::topic_del>(rd_kafka_topic_new(m_producer.get(), name.c_str(), nullptr));
 
             nova_assert(topic.handle != nullptr);
 
@@ -478,13 +702,22 @@ private:
 
     auto send_impl(const dsp::message& msg) -> rd_kafka_resp_err_t {
         rd_kafka_resp_err_t err;
+
         if (not msg.properties.empty()) {
             rd_kafka_headers_t* headers = rd_kafka_headers_new(msg.properties.size());
 
             for (const auto& [k, v] : msg.properties) {
-                // TODO(error): RD_KAFKA_RESP_ERR__READ_ONLY if the headers are read-only, else RD_KAFKA_RESP_ERR_NO_ERROR
-                // Does this error matter anyway?
-                rd_kafka_header_add(headers, k.c_str(), static_cast<long>(k.size()), v.c_str(), static_cast<long>(v.size()));
+                const rd_kafka_resp_err_t header_err = rd_kafka_header_add(
+                    headers,
+                    k.c_str(),
+                    static_cast<long>(k.size()),
+                    v.c_str(),
+                    static_cast<long>(v.size())
+                );
+
+                if (header_err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                    throw nova::exception("{}", rd_kafka_err2str(header_err));
+                }
             }
 
             #pragma GCC diagnostic push
@@ -525,65 +758,11 @@ private:
 
 };
 
-/**
- * @brief   Consumed message. Thin wrapper around the message pointer.
- */
-class message {
-public:
-    message(rd_kafka_message_t* message_ptr)
-        : m_message_ptr(message_ptr)
-    {}
-
-    message(const message&)            = delete;
-    message& operator=(const message&) = delete;
-
-    message(message&& rhs) {
-        m_message_ptr = rhs.m_message_ptr;
-        rhs.m_message_ptr = nullptr;
-    }
-
-    message& operator=(message&& rhs) {
-        m_message_ptr = rhs.m_message_ptr;
-        rhs.m_message_ptr = nullptr;
-        return *this;
-    }
-
-    ~message() {
-        if (m_message_ptr != nullptr) {
-            rd_kafka_message_destroy(m_message_ptr);
-        }
-    }
-
-    [[nodiscard]] auto key() const -> std::string_view {
-        return { reinterpret_cast<const char*>(m_message_ptr->key), m_message_ptr->key_len };
-    }
-
-    [[nodiscard]] auto payload() const -> std::string_view {
-        return { reinterpret_cast<const char*>(m_message_ptr->payload), m_message_ptr->len };
-    }
-
-    [[nodiscard]] auto topic() const -> std::string {
-        return rd_kafka_topic_name(m_message_ptr->rkt);
-    }
-
-    [[nodiscard]] auto partition() const -> std::int32_t {
-        return m_message_ptr->partition;
-    }
-
-    [[nodiscard]] auto offset() const -> std::int64_t {
-        return m_message_ptr->offset;
-    }
-
-private:
-    rd_kafka_message_t* m_message_ptr;
-
-};
-
 class consumer {
 public:
 
     /**
-     * @brief   Create a Kafka consumer
+     * @brief   Create a Kafka consumer.
      */
     consumer(properties props)
         : m_props(std::move(props))
@@ -591,9 +770,8 @@ public:
         auto config = m_props.create();
 
         char errstr[detail::ErrorMsgLength];
-        m_consumer = std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>>(
-            rd_kafka_new(RD_KAFKA_CONSUMER, config, errstr, sizeof(errstr)),
-            rd_kafka_destroy
+        m_consumer = std::unique_ptr<rd_kafka_t, detail::kafka_del>(
+            rd_kafka_new(RD_KAFKA_CONSUMER, config, errstr, sizeof(errstr))
         );
 
         if (m_consumer == nullptr) {
@@ -609,12 +787,14 @@ public:
     consumer& operator=(consumer&&)         = delete;
 
     ~consumer() {
-        // TODO: Returns rd_kafka_resp_err_t
-        rd_kafka_unsubscribe(m_consumer.get());
         nova::topic_log::info("kafka", "Stopping Kafka...");
+        unsubscribe();
+
+        rd_kafka_consumer_close(m_consumer.get());
+        rd_kafka_queue_destroy(m_queue);
     }
 
-    auto subscribe(const std::vector<std::string>& topics) {
+    void subscribe(const std::vector<std::string>& topics) {
         rd_kafka_topic_partition_list_t *subscription = rd_kafka_topic_partition_list_new(static_cast<int>(topics.size()));
         for (const auto& topic : topics) {
             rd_kafka_topic_partition_list_add(subscription, topic.c_str(), RD_KAFKA_PARTITION_UA);      // Partition is ignored by subscribe().
@@ -623,41 +803,161 @@ public:
         rd_kafka_resp_err_t err = rd_kafka_subscribe(m_consumer.get(), subscription);
         if (err) {
             rd_kafka_topic_partition_list_destroy(subscription);
-            THROWUP;        // TODO: Return a proper error.
+            throw nova::exception(rd_kafka_err2str(err));
         }
 
         rd_kafka_topic_partition_list_destroy(subscription);
+
+        m_queue = rd_kafka_queue_get_consumer(m_consumer.get());
     }
 
-    auto subscribe(const std::string& topic) {
-        return subscribe(std::vector<std::string>{ topic });
+    void subscribe(const std::string& topic) {
+        subscribe(std::vector<std::string>{ topic });
     }
 
-    auto consume(std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) -> std::optional<message> {
-        rd_kafka_message_t* message_ptr = rd_kafka_consumer_poll(m_consumer.get(), static_cast<int>(timeout.count()));
-        if (message_ptr == nullptr) {
-            return std::nullopt;
+    /**
+     * @brief   Unsubscribe with an infinite timeout.
+     *
+     * Timeout hardcoded in librdkafka.
+     *
+     * TODO(err): Design properly exposing errors from librdkafka.
+     */
+    void unsubscribe() {
+        rd_kafka_resp_err_t err = rd_kafka_unsubscribe(m_consumer.get());
+        if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+            nova::topic_log::warn("kafka", "Error during unsubscribe: {}", rd_kafka_err2str(err));
         }
+    }
 
-        if (message_ptr->err) {
-            nova::topic_log::error("kafka", "Consumer error: {}", rd_kafka_err2str(message_ptr->err));
+    auto consume(std::size_t batch_size, std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) {
+        std::vector<rd_kafka_message_t*> messages(batch_size);
+
+        auto n = rd_kafka_consume_batch_queue(m_queue, static_cast<int>(timeout.count()), messages.data(), batch_size);
+        if (n == -1) {
+            nova::topic_log::warn("kafka", "Error during consuming: {}", rd_kafka_err2str(rd_kafka_last_error()));
+        } else {
+            messages.resize(static_cast<std::size_t>(n));
         }
+        // }
 
-        return message{ message_ptr };
+        std::vector<message_view_owned> ret;
+        ret.reserve(batch_size);
+        std::ranges::transform(messages, std::back_inserter(ret), [](rd_kafka_message_t* msg) { return message_view_owned{ msg }; });
+        return ret;
     }
 
 private:
     properties m_props;
-    std::unique_ptr<rd_kafka_t, deleter<decltype(rd_kafka_destroy)>> m_consumer{ nullptr, rd_kafka_destroy };
+    std::unique_ptr<rd_kafka_t, detail::kafka_del> m_consumer { nullptr };
 
-    struct topic_t {
-        std::unique_ptr<rd_kafka_topic_partition_list_t, deleter<decltype(rd_kafka_topic_partition_list_destroy)>> partitions{ nullptr, rd_kafka_topic_partition_list_destroy };
-        std::unique_ptr<rd_kafka_topic_t, deleter<decltype(rd_kafka_topic_destroy)>> handle{ nullptr, rd_kafka_topic_destroy };
-    };
+    // TODO: Smart pointer.
+    rd_kafka_queue_t* m_queue;
 
-    using topics_t = std::map<std::string, topic_t>;
-    topics_t m_topics;
+    detail::topics_t m_topics;
 
 };
 
 } // namespace dsp::kf
+
+
+template <>
+class fmt::formatter<dsp::kf::message_view_owned> {
+public:
+
+    /**
+     * @brief   Parses format specifiers and stores them in the formatter.
+     *
+     * Reference: https://fmt.dev/latest/api/#formatting-user-defined-types
+     *
+     * [ctx.begin(), ctx.end()) is a, possibly empty, character range that
+     * contains a part of the format string starting from the format
+     * specifications to be parsed, e.g. in
+     *
+     * fmt::format("{:f} continued", ...);
+     *
+     * the range will contain "f} continued". The formatter should parse
+     * specifiers until '}' or the end of the range.
+     */
+    constexpr auto parse(format_parse_context& ctx) {
+        auto it = ctx.begin();
+
+        // TODO: Why is it enough to check for only `}` and not also for end of range?
+        //       More importantly: why does it not work with checking end of range?
+        //
+        // for (; *it != '}' || it != ctx.end(); ++it) {}              // array subscript value ‘26’ is outside the bounds of array type ‘const char [26]’
+        // for (; it != ctx.end() || *it != '}'; ++it) {}              // ‘constexpr’ loop iteration count exceeds limit of 262144 (use ‘-fconstexpr-loop-limit=’ to increase the limit)
+
+        for (; *it != '}'; ++it) {}
+        m_format_spec = std::string_view{ ctx.begin(), it };
+
+        return it;
+    }
+
+    /**
+     * @brief   Format a Kafka message.
+     *
+     * - l = location (topic name, partition, offset)
+     * - k = key
+     * - v = value/payload
+     * - h = headers
+     *
+     * Example output: "dev-test [0] at offset 18 key=someKey value=someValue headers={"h1": value}
+     */
+    template <typename FmtContext>
+    constexpr auto format(const dsp::kf::message_view_owned& msg, FmtContext& ctx) const {
+        if (m_format_spec.contains('l')) {
+            fmt::format_to(
+                ctx.out(),
+                "{} [{}] at offset {} ",
+                msg.topic(),
+                msg.partition(),
+                msg.offset()
+            );
+        }
+
+        if (m_format_spec.contains('k')) {
+            fmt::format_to(ctx.out(), "key={} ", msg.key());
+        }
+
+        if (m_format_spec.contains('v')) {
+            fmt::format_to(ctx.out(), "value={} ", msg.payload());
+        }
+
+        if (m_format_spec.contains('h')) {
+            fmt::format_to(ctx.out(), "headers={}", msg.headers());
+        }
+
+        return ctx.out();
+    }
+
+private:
+    std::string_view m_format_spec;
+};
+
+// TODO(refact): Move it into Nova.
+template <>
+class fmt::formatter<nova::data_view> {
+public:
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FmtContext>
+    constexpr auto format(nova::data_view data, FmtContext& ctx) const {
+        if (is_printable(data)) {
+            return fmt::format_to(ctx.out(), "{}", data.as_string());
+        }
+        return fmt::format_to(ctx.out(), "x{}", data.as_hex_string());
+    }
+
+private:
+    [[nodiscard]] static auto is_printable(nova::data_view data) -> bool {
+        return not std::ranges::any_of(data, [](auto b) { return not is_printable(b); });
+    }
+
+    [[nodiscard]] static auto is_printable(std::byte b) -> bool {
+        const auto r = nova::ascii::PrintableRange;
+        const auto ch = std::to_integer<char>(b);
+        return r.low < ch && ch < r.high;
+    }
+};

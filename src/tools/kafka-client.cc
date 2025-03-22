@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -41,11 +42,11 @@ public:
         : m_metrics(metrics)
     {}
 
-    void handle_error([[maybe_unused]] const rd_kafka_message_t* message) {
+    void handle_error([[maybe_unused]] dsp::kf::message_view message) {
         ++m_metrics->n_drop_messages;
     }
 
-    void handle_success([[maybe_unused]] const rd_kafka_message_t* message) {
+    void handle_success([[maybe_unused]] dsp::kf::message_view message) {
         ++m_metrics->n_sent_messages;
     }
 
@@ -61,7 +62,7 @@ auto produce(const po::variables_map& args) {
     const auto size = args["size"].as<std::size_t>();
 
     const auto data = nova::random().string<nova::alphanumeric_distribution>(size);
-    nova::log::info("Generated payload with size {}: {}", size, data);
+    nova::topic_log::debug("kfc", "Generated payload with size {}: {}", size, data);
 
     auto metrics = std::make_shared<struct metrics>();
 
@@ -85,7 +86,7 @@ auto produce(const po::variables_map& args) {
         producer.try_send(message);
         if (stat.observe(message.payload.size())) {     // TODO: full message size, potentially from delivery handler
             nova::topic_log::info(
-                "perf",
+                "kfc",
                 "Messages sent {} (dropped: {}) -- {}",
                 metrics->n_sent_messages,
                 metrics->n_drop_messages,
@@ -95,7 +96,7 @@ auto produce(const po::variables_map& args) {
     }
 
     if (not producer.flush(5s)) {
-        nova::topic_log::warn("perf", "Flush timed out");
+        nova::topic_log::warn("kfc", "Flush timed out");
     }
 
     const auto elapsed = nova::to_sec(timer.elapsed());
@@ -104,7 +105,7 @@ auto produce(const po::variables_map& args) {
 
     // TODO(refact): Create a function the does formatting for a consistent style.
     nova::topic_log::info(
-        "perf",
+        "kfc",
         "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",
         mbps / nova::units::constants::MByte,
         mps / nova::units::constants::kilo,
@@ -116,37 +117,39 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
     const auto broker = args["broker"].as<std::string>();
     const auto group_id = args["group-id"].as<std::string>();
     const auto topic = args["topic"].as<std::string>();
+    const auto batch_size = args["batch-size"].as<std::size_t>();
+    const auto max_messages = args["count"].as<std::size_t>();
 
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
     cfg.group_id(group_id);
     cfg.offset_earliest();
+    cfg.enable_partition_eof();
 
     auto stat = statistics{ };
 
     auto consumer = dsp::kf::consumer{ std::move(cfg) };
     consumer.subscribe(topic);
 
-    nova::topic_log::info("kafka", "Subscribed to: {}", topic);
+    nova::topic_log::info("kfc", "Subscribed to: {}", topic);
 
-    while (g_sigint == 0) {
-        const auto message = consumer.consume();
-        if (not message.has_value()) {
-            nova::topic_log::debug("kafka", "No message, polling...");
-            continue;
+    while (g_sigint == 0 && stat.n_messages() < max_messages) {
+        for (const auto& message : consumer.consume(batch_size)) {
+            if (message.eof()) {
+                nova::topic_log::debug("kfc", "End of partition has been reached at offset {}", message.offset());
+                continue;
+            }
+
+            nova::topic_log::trace("kfc", "Message consumed: {:lkvh}", message);
+
+            if (stat.observe(message.payload().size())) {     // TODO: full message size
+                nova::topic_log::info(
+                    "kfc",
+                    "Messages consumed {}",
+                    stat.to_string()
+                );
+            }
         }
-
-        stat.observe(message->payload().size());        // TODO: full message size
-
-        nova::topic_log::info(
-            "kafka",
-            "Message consumed: {} [{}] at offset {}  key={} payload={}",
-            message->topic(),
-            message->partition(),
-            message->offset(),
-            message->key(),
-            message->payload()
-        );
     }
 }
 
@@ -185,7 +188,10 @@ auto parse_args_consume(const std::vector<std::string>& subargs)
     arg_parser.add_options()
         ("broker,b", po::value<std::string>()->required(), "Address of the Kafka broker")
         ("topic,t", po::value<std::string>()->required(), "Topic name")
-        ("group-id,g", po::value<std::string>(), "Group ID")
+        ("group-id,g", po::value<std::string>()->required(), "Group ID")
+        ("count,c", po::value<std::size_t>()->default_value(std::numeric_limits<std::size_t>::max()),
+            "Number of messages to consume (note: at least batch size number of messages will be consumed)")
+        ("batch-size,B", po::value<std::size_t>()->default_value(1), "Consuming batch sizes")
         ("help,h", "Show this help message")
     ;
 
@@ -243,7 +249,7 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
 }
 
 auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
-    nova::log::init("perf");
+    nova::log::init("kfc");
 
     [[maybe_unused]] auto sig = dsp::signal_handler{ };
     const auto client = args["command"].as<std::string>();
