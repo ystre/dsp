@@ -35,7 +35,7 @@ function load-data() {
 
 function stage-entry() {
     local broker="localhost:9092"
-    local topic_name="perf-test-consumer"
+    local topic_name="perf-test"
 
     group_id="perf-consumer-"
     group_id+="$(_random-string 16)"
@@ -47,9 +47,10 @@ function stage-entry() {
         --broker "${broker}" \
         --topic "${topic_name}" \
         --group-id "${group_id}" \
-        --count 10000000 \
+        --count 20000000 \
         --batch-size 1000 \
-        | tee "${LOG_CLIENT}"
+        --exit-eof true \
+        2>&1 | tee "${LOG_CLIENT}"
 
     msg "Testing has finished"
 

@@ -119,6 +119,7 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
     const auto topic = args["topic"].as<std::string>();
     const auto batch_size = args["batch-size"].as<std::size_t>();
     const auto max_messages = args["count"].as<std::size_t>();
+    const auto exit_eof = args["exit-eof"].as<bool>();
 
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
@@ -133,10 +134,29 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
 
     nova::topic_log::info("kfc", "Subscribed to: {}", topic);
 
+    auto timer = nova::stopwatch();
+
     while (g_sigint == 0 && stat.n_messages() < max_messages) {
         for (const auto& message : consumer.consume(batch_size)) {
             if (message.eof()) {
                 nova::topic_log::debug("kfc", "End of partition has been reached at offset {}", message.offset());
+
+                // TODO(feat): Handle EOF correctly in case of multiple topics.
+                if (exit_eof) {
+                    const auto elapsed = nova::to_sec(timer.elapsed());
+                    const auto mbps = static_cast<double>(stat.n_bytes()) / elapsed;
+                    const auto mps = static_cast<double>(stat.n_messages()) / elapsed;
+
+                    nova::topic_log::info(
+                        "kfc",
+                        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",
+                        mbps / nova::units::constants::MByte,
+                        mps / nova::units::constants::kilo,
+                        elapsed
+                    );
+
+                    return;
+                }
                 continue;
             }
 
@@ -191,6 +211,7 @@ auto parse_args_consume(const std::vector<std::string>& subargs)
         ("group-id,g", po::value<std::string>()->required(), "Group ID")
         ("count,c", po::value<std::size_t>()->default_value(std::numeric_limits<std::size_t>::max()),
             "Number of messages to consume (note: at least batch size number of messages will be consumed)")
+        ("exit-eof,e", po::value<bool>()->default_value(false), "Exit if EOF is reached")
         ("batch-size,B", po::value<std::size_t>()->default_value(1), "Consuming batch sizes")
         ("help,h", "Show this help message")
     ;

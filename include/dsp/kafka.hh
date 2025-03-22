@@ -905,7 +905,7 @@ public:
      */
     template <typename FmtContext>
     constexpr auto format(const dsp::kf::message_view_owned& msg, FmtContext& ctx) const {
-        if (m_format_spec.contains('l')) {
+        if (m_format_spec.find('l') != std::string_view::npos) {
             fmt::format_to(
                 ctx.out(),
                 "{} [{}] at offset {} ",
@@ -915,15 +915,15 @@ public:
             );
         }
 
-        if (m_format_spec.contains('k')) {
+        if (m_format_spec.find('k') != std::string_view::npos) {
             fmt::format_to(ctx.out(), "key={} ", msg.key());
         }
 
-        if (m_format_spec.contains('v')) {
+        if (m_format_spec.find('v') != std::string_view::npos) {
             fmt::format_to(ctx.out(), "value={} ", msg.payload());
         }
 
-        if (m_format_spec.contains('h')) {
+        if (m_format_spec.find('h') != std::string_view::npos) {
             fmt::format_to(ctx.out(), "headers={}", msg.headers());
         }
 
