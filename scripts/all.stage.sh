@@ -1,13 +1,14 @@
 function stage-entry() {
     local stages=(
-        clean
         build
         unit-test
         cert
         deps
         ft-kafka-producer
+        ft-kafka-consumer
         perf-tcp
         perf-kafka-producer
+        perf-kafka-consumer
         perf-dsp
         doc
         create-perf-report
