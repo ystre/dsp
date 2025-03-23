@@ -139,7 +139,12 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
     while (g_sigint == 0 && stat.n_messages() < max_messages) {
         for (const auto& message : consumer.consume(batch_size)) {
             if (message.eof()) {
-                nova::topic_log::debug("kfc", "End of partition has been reached at offset {}", message.offset());
+                nova::topic_log::debug(
+                    "kfc",
+                    "End of partition [{}] has been reached at offset {}",
+                    message.partition(),
+                    message.offset()
+                );
 
                 // TODO(feat): Handle EOF correctly in case of multiple topics.
                 if (exit_eof) {
@@ -147,6 +152,7 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
                     const auto mbps = static_cast<double>(stat.n_bytes()) / elapsed;
                     const auto mps = static_cast<double>(stat.n_messages()) / elapsed;
 
+                    // TODO(refact): Create a function the does formatting for a consistent style.
                     nova::topic_log::info(
                         "kfc",
                         "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",

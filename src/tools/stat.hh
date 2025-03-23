@@ -59,6 +59,9 @@ public:
     }
 
     [[nodiscard]] auto to_string() const -> std::string {
+        // TODO(feat): Maybe extend with total number of messages.
+        //             Configurable format (?)
+        //             Moar statistics, e.g., latency.
         return fmt::format(
             "{:.2f} MBps  "
             "{:.2f}k MPS "

@@ -1,6 +1,6 @@
 BUILD_TYPE=Release
 BUILD_DIR="${G_PROJECT_DIR}/build/${BUILD_TYPE}"
-LOG_CLIENT="${G_ARTIFACT_DIR}/kafka-consumer.log"
+LOG_CLIENT="${G_ARTIFACT_DIR}/kafka-consumer-perf.log"
 REPORT_PATH="${G_REPORT_DIR}/kafka-consumer-perf.txt"
 
 function _random-string() {

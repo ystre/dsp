@@ -5,6 +5,7 @@ function stage-entry() {
         cert
         deps
         ft-kafka-producer
+        ft-kafka-consumer
         perf-tcp
         perf-kafka-producer
         perf-kafka-consumer

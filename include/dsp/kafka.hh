@@ -10,8 +10,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <cstddef>
 #include <dsp/cache.hh>
 
 #include <nova/error.hh>
@@ -22,30 +20,35 @@
 #include <fmt/format.h>
 #include <librdkafka/rdkafka.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <map>
+#include <cstddef>
 #include <memory>
 #include <ranges>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <type_traits>
+#include <unordered_map>
 
 namespace dsp::kf {
 
 namespace detail {
 
+    constexpr auto PollTimeout = std::chrono::milliseconds { 1000 };
+
     struct kafka_del     { void operator()(rd_kafka_t* ptr)                      { rd_kafka_destroy(ptr); } };
     struct partition_del { void operator()(rd_kafka_topic_partition_list_t* ptr) { rd_kafka_topic_partition_list_destroy(ptr); } };
     struct topic_del     { void operator()(rd_kafka_topic_t* ptr)                { rd_kafka_topic_destroy(ptr); } };
+    struct queue_del     { void operator()(rd_kafka_queue_t* ptr)                { rd_kafka_queue_destroy(ptr); } };
 
     struct topic_t {
         std::unique_ptr<rd_kafka_topic_partition_list_t, detail::partition_del> partitions { nullptr };
         std::unique_ptr<rd_kafka_topic_t, detail::topic_del> handle { nullptr };
     };
 
-    using topics_t = std::map<std::string, topic_t>;
+    using topics_t = std::unordered_map<std::string, topic_t>;
 
     /**
      * @brief   A view for consumed message. A thin wrapper around the message pointer.
@@ -471,7 +474,10 @@ public:
         set_basic_props(config);
         rd_kafka_conf_set_opaque(config, &m_callbacks);
         rd_kafka_conf_set_log_cb(config, detail::log_callback);
+
         // TODO(feat): Finish rebalance callback API.
+        //             Must be added in consumer as it is a consumer-only configuration.
+        //
         // rd_kafka_conf_set_rebalance_cb(config, detail::rebalance_callback);
 
         if (m_callbacks.delivery != nullptr) {
@@ -490,7 +496,7 @@ public:
     }
 
 private:
-    std::map<std::string, std::string> m_cfg;
+    std::unordered_map<std::string, std::string> m_cfg;
     detail::callbacks_t m_callbacks;
 
     void set_basic_props(rd_kafka_conf_t* config) {
@@ -524,16 +530,29 @@ private:
     }
 };
 
+/**
+ * @brief   Kafka producer based on librdkafka's C-API.
+ *
+ * It has a background poller thread that continuously polls events. They can
+ * be messages, delivery reports and other internal events.
+ *
+ * It is non-copyable and non-movable.
+ *
+ * Performance oriented implementation.
+ *
+ * Poll timeouts:
+ * - 1 second by default, used by poller thread.
+ * - 5 seconds for flushing from destructor - TODO(design): if this is a good idea.
+ * - 100 milliseconds for retries in case of producer queue is full.
+ */
 class producer {
     struct poller {
-        static constexpr auto PollTimeout  = std::chrono::milliseconds{ 1000 };
-
         rd_kafka_t* producer;
         std::atomic_bool& keep_alive;
 
         void operator()() {
             while (keep_alive.load()) {
-                rd_kafka_poll(producer, static_cast<int>(PollTimeout.count()));
+                rd_kafka_poll(producer, static_cast<int>(detail::PollTimeout.count()));
             }
         }
     };
@@ -575,7 +594,7 @@ public:
 
         if (m_producer != nullptr) {
             // TODO(design): Should the destructor flush? No opportunity to handle if flush times out.
-            rd_kafka_flush(m_producer.get(), static_cast<int>(FlushTimeout.count()));
+            [[maybe_unused]] const auto success = flush(FlushTimeout);
             if (m_keep_alive.load()) {
                 stop();
             }
@@ -606,12 +625,12 @@ public:
     /**
      * @brief   Enqueue a message.
      *
-     * Spins in a loop if the queue is full. (Polling interval is 100ms by default)
+     * Spins in a loop if the queue is full. (Polling interval is 100ms; hard-coded)
      *
      * @throws  if an unexpected error happens:
      *            - Message is larger than "messages.max.bytes"
      *            - Unknown partition or topic
-                  - `RD_KAFKA_RESP_ERR__READ_ONLY` if the headers are read-only
+     *            - `RD_KAFKA_RESP_ERR__READ_ONLY` if the headers are read-only
      */
     void send(const dsp::message& msg) {
         static constexpr auto PollTimeout  = std::chrono::milliseconds{ 100 };
@@ -647,7 +666,7 @@ public:
      * @throws  if an unexpected error happens:
      *            - Message is larger than "messages.max.bytes"
      *            - Unknown partition or topic
-                  - `RD_KAFKA_RESP_ERR__READ_ONLY` if the headers are read-only
+     *            - `RD_KAFKA_RESP_ERR__READ_ONLY` if the headers are read-only
      */
     auto try_send(const dsp::message& msg) -> bool {
         const auto status = send_impl(msg);
@@ -758,6 +777,13 @@ private:
 
 };
 
+/**
+ * @brief   Kafka consumer based on librdkafka's C-API.
+ *
+ * It is non-copyable and non-movable.
+ *
+ * Performance oriented implementation.
+ */
 class consumer {
 public:
 
@@ -768,6 +794,7 @@ public:
         : m_props(std::move(props))
     {
         auto config = m_props.create();
+        // TODO(feat): Configure rebalance callback.
 
         char errstr[detail::ErrorMsgLength];
         m_consumer = std::unique_ptr<rd_kafka_t, detail::kafka_del>(
@@ -791,7 +818,6 @@ public:
         unsubscribe();
 
         rd_kafka_consumer_close(m_consumer.get());
-        rd_kafka_queue_destroy(m_queue);
     }
 
     void subscribe(const std::vector<std::string>& topics) {
@@ -808,7 +834,9 @@ public:
 
         rd_kafka_topic_partition_list_destroy(subscription);
 
-        m_queue = rd_kafka_queue_get_consumer(m_consumer.get());
+        m_queue = std::unique_ptr<rd_kafka_queue_t, detail::queue_del>(
+            rd_kafka_queue_get_consumer(m_consumer.get())
+        );
     }
 
     void subscribe(const std::string& topic) {
@@ -818,7 +846,7 @@ public:
     /**
      * @brief   Unsubscribe with an infinite timeout.
      *
-     * Timeout hardcoded in librdkafka.
+     * Timeout is hard-coded in librdkafka.
      *
      * TODO(err): Design properly exposing errors from librdkafka.
      */
@@ -829,16 +857,34 @@ public:
         }
     }
 
-    auto consume(std::size_t batch_size, std::chrono::milliseconds timeout = std::chrono::milliseconds{ 500 }) {
+    /**
+     * @brief   Consume messages in batches.
+     *
+     * Suggested minimum batch size is 10 for high throughput.
+     *
+     * Consider using smaller batches or smaller timeout than the default
+     * 1 second if the expected throughput is low and low latency is required.
+     *
+     * Errors are logged, but not returned to the caller.
+     *
+     * Note: Consumed messages have their headers parsed upon calling
+     * `message_view_owned::headers()`, therefore it should not matter
+     * from a performance perspective if the messages have headers or not,
+     * unless they are explicitly accessed.
+     *
+     * @returns a batch of owned message views.
+     */
+    auto consume(std::size_t batch_size, std::chrono::milliseconds timeout = detail::PollTimeout)
+            -> std::vector<message_view_owned>
+    {
         std::vector<rd_kafka_message_t*> messages(batch_size);
 
-        auto n = rd_kafka_consume_batch_queue(m_queue, static_cast<int>(timeout.count()), messages.data(), batch_size);
+        auto n = rd_kafka_consume_batch_queue(m_queue.get(), static_cast<int>(timeout.count()), messages.data(), batch_size);
         if (n == -1) {
             nova::topic_log::warn("kafka", "Error during consuming: {}", rd_kafka_err2str(rd_kafka_last_error()));
         } else {
             messages.resize(static_cast<std::size_t>(n));
         }
-        // }
 
         std::vector<message_view_owned> ret;
         ret.reserve(batch_size);
@@ -849,9 +895,7 @@ public:
 private:
     properties m_props;
     std::unique_ptr<rd_kafka_t, detail::kafka_del> m_consumer { nullptr };
-
-    // TODO: Smart pointer.
-    rd_kafka_queue_t* m_queue;
+    std::unique_ptr<rd_kafka_queue_t, detail::queue_del> m_queue { nullptr };
 
     detail::topics_t m_topics;
 
@@ -943,7 +987,7 @@ public:
     }
 
     template <typename FmtContext>
-    constexpr auto format(nova::data_view data, FmtContext& ctx) const {
+    auto format(nova::data_view data, FmtContext& ctx) const {
         if (is_printable(data)) {
             return fmt::format_to(ctx.out(), "{}", data.as_string());
         }
@@ -958,6 +1002,6 @@ private:
     [[nodiscard]] static auto is_printable(std::byte b) -> bool {
         const auto r = nova::ascii::PrintableRange;
         const auto ch = std::to_integer<char>(b);
-        return r.low < ch && ch < r.high;
+        return r.low <= ch && ch <= r.high;
     }
 };
