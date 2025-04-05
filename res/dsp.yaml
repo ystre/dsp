@@ -6,16 +6,17 @@ dsp:
   daemon-interval: 1
   interfaces:
     southbound:
-      type: tcp
-      port: 7200
+      # type: tcp
+      # port: 7200
+      type: kafka
+      address: localhost:9092
+      groupid: dsp-consumer
+      topics: ["dev-test"]
     northbound:
       enabled: false
       name: main-nb
       type: kafka
       address: localhost:9092
-      # - name: main-nb
-        # type: kafka
-        # address: kafka:9092
     metrics:
       enabled: true
       port: 9555

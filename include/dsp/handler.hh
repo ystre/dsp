@@ -7,7 +7,7 @@
 #pragma once
 
 #include "dsp/cache.hh"
-#include "dsp/metrics.hh"
+#include "dsp/kafka.hh"
 #include "dsp/tcp_handler.hh"
 
 #include <nova/log.hh>
@@ -16,26 +16,17 @@
 
 #include <boost/asio/error.hpp>
 
-#include <any>
 #include <cstddef>
-#include <cstdint>
-#include <exception>
-#include <memory>
 #include <string>
 
 namespace dsp {
 
-struct context {
-    std::shared_ptr<metrics_registry> stats;
-    std::any app;
-};
-
 /**
- * @brief   Handler factory with DSP context.
+ * @brief   TCP handler factory with DSP context.
  */
 class handler_factory : public tcp::handler_factory {
 public:
-    virtual void context(const context&) { /* optional */ }
+    virtual void context(context) { /* optional */ }
     virtual ~handler_factory() = default;
 };
 
@@ -110,6 +101,17 @@ private:
     connection_metrics m_connection_metrics {};
     nova::stopwatch m_timer;
 
+};
+
+class kafka_message_handler {
+public:
+    void process(kf::message_view_owned& message) {
+        // FIXME: Segfault without format specicifers.
+        // TODO(feat): Expose a customization point.
+        nova::topic_log::trace("dsp", "Message received {:lkvh}", message);
+    }
+
+private:
 };
 
 } // namespace dsp

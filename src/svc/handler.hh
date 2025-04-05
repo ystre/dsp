@@ -95,8 +95,9 @@ public:
         nova::unreachable();
     }
 
-    void context(const dsp::context& ctx) override {
-        m_ctx = ctx;
+    void context(dsp::context ctx) override {
+        // TODO(design): Why is cache not in context?
+        m_ctx = std::move(ctx);
     }
 
 private:

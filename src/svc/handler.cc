@@ -6,6 +6,8 @@
 
 #include "handler.hh"
 
+#include "dsp/metrics.hh"
+
 #include <nova/data.hh>
 #include <nova/log.hh>
 

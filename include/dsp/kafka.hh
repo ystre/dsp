@@ -806,6 +806,10 @@ public:
         }
 
         rd_kafka_poll_set_consumer(m_consumer.get());
+
+        m_queue = std::unique_ptr<rd_kafka_queue_t, detail::queue_del>(
+            rd_kafka_queue_get_consumer(m_consumer.get())
+        );
     }
 
     consumer(const consumer&)               = delete;
@@ -833,10 +837,6 @@ public:
         }
 
         rd_kafka_topic_partition_list_destroy(subscription);
-
-        m_queue = std::unique_ptr<rd_kafka_queue_t, detail::queue_del>(
-            rd_kafka_queue_get_consumer(m_consumer.get())
-        );
     }
 
     void subscribe(const std::string& topic) {

@@ -192,26 +192,43 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
     ;
 
     auto service = dsp::service(*cfg);
-    auto builder = service.cfg_northbound();
+    auto nb_builder = service.cfg_northbound();
 
     try {
-        builder.kafka_props()->delivery_callback(std::make_unique<delivery_handler>(service.get_metrics()));
-        builder.kafka_props()->throttle_callback(std::make_unique<throttle_handler>(service.get_metrics()));
-        builder.kafka_props()->statistics_callback(std::make_unique<statistics_handler>(service.get_metrics()));
-        builder.build();
+        nb_builder.kafka_props()->delivery_callback(std::make_unique<delivery_handler>(service.get_metrics()));
+        nb_builder.kafka_props()->throttle_callback(std::make_unique<throttle_handler>(service.get_metrics()));
+        nb_builder.kafka_props()->statistics_callback(std::make_unique<statistics_handler>(service.get_metrics()));
+        nb_builder.build();
     } catch (const std::exception& ex) {
-        logging::warn("app", "Kafka delivery handled cannot be attached. Interface `main-nb` is either not enabled or not a Kafka producer");
+        logging::warn("app", "Cannot attach Kafka callbacks, northbound interface is either not enabled or not a Kafka producer");
     }
-
-    // TODO(design): Currently it is TCP specfic,
-    //               it should accept other factories if compatible.
-    service.handler<app::factory>(read_handler_cfg(*cfg));
 
     auto app_cfg = std::make_shared<app::context>();
     app_cfg->router = dsp::router{ };
 
+    auto sb_builder = service.cfg_southbound();
+
+    try {
+        sb_builder.tcp_handler<app::factory>(read_handler_cfg(*cfg));
+    } catch (const std::exception& ex) {
+        logging::warn("app", "Cannot attach TCP handler, southbound interface is not configured to be a TCP listener");
+    }
+
+    try {
+        sb_builder.kafka_props()->offset_earliest();
+    } catch (const std::exception& ex) {
+        logging::warn("app", "Cannot set Kafka property, southbound interface is not configured to be a Kafka listener");
+    }
+
     // TODO(refact): Metrics are provided and bound by the framework, but relies on this call.
-    service.bind_context(std::make_any<AppContext>(app_cfg));
+    try {
+        // TODO(design): Bind context before creating the interface.
+        sb_builder.bind_context(std::make_any<AppContext>(app_cfg));
+    } catch (const std::exception& ex) {
+        logging::warn("app", "Cannot bind context: {}", ex.what());
+    }
+
+    sb_builder.build();
 
     service.northbound("custom-nb", std::make_unique<custom_northbound>());
 

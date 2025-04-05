@@ -9,15 +9,16 @@
 Data Stream Processing (DSP) is an SDK containing a runtime framework for
 various services, from bare-metal to cloud services.
 
-In a nutshell, it provides a southbound interface with possibly multiple
-northbound interfaces.
+In a nutshell, it provides one southbound interface with possibly multiple
+northbound interfaces and auxiliary interfaces for observability and for
+runtime configuration.
 
 == Interfaces
 
 * Southbound:
 ** TCP server (PoC)
 ** UDP server
-** Kafka consumer
+** Kafka consumer (PoC)
 * Northbound
 ** TCP client (PoC)
 ** Kafka producer (PoC)
@@ -27,6 +28,9 @@ northbound interfaces.
 ** Logging (PoC)
 ** Metrics (Under design)
 ** Alarms (No current plan)
+* OAM interface
+** HTTP
+** Kafka
 
 === Northbound Interfaces
 
@@ -48,11 +52,11 @@ NOTE: TODO: values should be byte arrays
 
 | Headers
 | Key:String, Value:String
-| Arbitratry data categorizing, labelling the message.
+| Arbitrary data categorizing, labelling the message.
 
 | Payload
 | Byte array
-| Arbitratry content of the message
+| Arbitrary content of the message
 |===
 
 [source,cpp]
@@ -67,6 +71,19 @@ Primary use-case is Kafka currently, the format might change in the future.
 NOTE: stub section
 
 === Southbound Interfaces
+
+The framework supports running only one southbound interface at any given time.
+It is the first interface to be started when the service starts.
+
+When the service is stopped, it requests the southbound interface to be stopped
+before detaching all worker threads.
+
+Binding application context enables to share arbitrary data that is opaque to
+the framework. Implementations must wrap it together with DSP context, the
+class interface expects `dsp::context` that contains various data, global
+objects that are automatically exposed to client code.
+
+NOTE: TODO: _cache_ is not wrapped in `dsp::context`.
 
 Southbound interfaces use _Handlers_. They define what and how to process.
 
@@ -110,6 +127,14 @@ public:
 ----
 
 NOTE: TODO: example code in the library
+
+== Configuring Interfaces
+
+In DSP Service, the interfaces are configurable via _Builders_ which makes
+possible for the framework to pre-configure interfaces and leave some details
+up to the client code. The `build()` function finalizes the configuration. It
+might be a no-op in case the interface is implemented in a way that makes
+additional configuration possible after the instance is created.
 
 == Supporting Library
 
@@ -155,8 +180,8 @@ constructed with a (YAML) configuration.
 
 TCP server is provided by the service out of the box which is available through
 `interfaces.southbound.type = "tcp"` configuration. The only configurable
-parameter of the TCP server is the port. It is accepting connections from all
-IP addresses.
+parameter of the TCP server is the port. It accepts connections from all IP
+addresses.
 
 === Configuration
 
