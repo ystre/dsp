@@ -32,7 +32,6 @@ struct net_config {
 struct server_metrics {
     std::atomic_uint64_t n_connections;
     std::atomic_uint64_t buffer;
-    std::atomic_uint64_t buffer_capacity;
 };
 
 class server {

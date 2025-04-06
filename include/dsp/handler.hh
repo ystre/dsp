@@ -103,15 +103,34 @@ private:
 
 };
 
-class kafka_message_handler {
+// TODO(naming): `handler`, as in TCP. Also, put into `kf` namespace.
+class kafka_handler_interface {
 public:
-    void process(kf::message_view_owned& message) {
-        // FIXME: Segfault without format specicifers.
-        // TODO(feat): Expose a customization point.
-        nova::topic_log::trace("dsp", "Message received {:lkvh}", message);
-    }
+    virtual void process(kf::message_view_owned& message) = 0;
 
-private:
+    // TODO(naming): Inconsistent with `context()` in TCP. Simply `bind()`?
+    //               Also, mind similar functions in DSP.
+    virtual void bind_context(context) { /* optional */ }
+    virtual ~kafka_handler_interface() = default;
 };
+
+// template <typename Derived>
+// class kf_handler_frame : public kf::handler {
+    // struct metrics {
+        // std::size_t n_messages;
+        // std::size_t n_bytes;
+    // };
+
+// public:
+    // auto process(kf::message_view_owned& message) -> std::size_t override {
+        // if (not message.ok()) {}
+        // if (message.eof()) {}
+
+        // m_metrics.n_messages += 1;
+        // m_metrics.n_bytes += message.payload().size();
+
+        // const auto msg_size = static_cast<Derived*>(this)->do_process(message);
+    // }
+// }
 
 } // namespace dsp

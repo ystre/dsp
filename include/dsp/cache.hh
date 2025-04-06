@@ -10,7 +10,6 @@
 #include <nova/error.hh>
 
 #include <any>
-#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -18,9 +17,11 @@
 namespace dsp {
 
 class metrics_registry;
+class cache;
 
 struct context {
     std::shared_ptr<metrics_registry> stats;
+    std::shared_ptr<class cache> cache;
     std::any app;
 };
 
@@ -28,7 +29,7 @@ struct context {
 struct message {
     nova::bytes key;
     std::string subject;
-    std::map<std::string, std::string> properties;
+    std::unordered_map<std::string, std::string> properties;
     nova::bytes payload;
 };
 // end::message[]
@@ -46,8 +47,9 @@ public:
  *          northbound interfaces.
  */
 class cache {
-public:
     using interfaces_a = std::unordered_map<std::string, std::unique_ptr<northbound_interface>>;
+
+public:
 
     void attach_northbound(const std::string& name, std::unique_ptr<northbound_interface> interface) {
         m_interfaces.insert({ name, std::move(interface) });

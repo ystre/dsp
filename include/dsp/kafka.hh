@@ -683,7 +683,7 @@ public:
     }
 
     void stop() {
-        nova::topic_log::info("kafka", "Stopping Kafka...");
+        nova::topic_log::debug("kafka", "Stopping librdkafka producer...");
         m_keep_alive.store(false);
     }
 
@@ -818,10 +818,11 @@ public:
     consumer& operator=(consumer&&)         = delete;
 
     ~consumer() {
-        nova::topic_log::info("kafka", "Stopping Kafka...");
+        nova::topic_log::debug("kafka", "Stopping librdkafka consumer...");
         unsubscribe();
 
         rd_kafka_consumer_close(m_consumer.get());
+        nova::topic_log::debug("kafka", "librdkafka consumer has been stopped");
     }
 
     void subscribe(const std::vector<std::string>& topics) {
@@ -925,15 +926,9 @@ public:
     constexpr auto parse(format_parse_context& ctx) {
         auto it = ctx.begin();
 
-        // TODO: Why is it enough to check for only `}` and not also for end of range?
-        //       More importantly: why does it not work with checking end of range?
-        //
-        // for (; *it != '}' || it != ctx.end(); ++it) {}              // array subscript value ‘26’ is outside the bounds of array type ‘const char [26]’
-        // for (; it != ctx.end() || *it != '}'; ++it) {}              // ‘constexpr’ loop iteration count exceeds limit of 262144 (use ‘-fconstexpr-loop-limit=’ to increase the limit)
+        for (; it != ctx.end() && *it != '}'; ++it) {}
 
-        for (; *it != '}'; ++it) {}
         m_format_spec = std::string_view{ ctx.begin(), it };
-
         return it;
     }
 
@@ -949,7 +944,7 @@ public:
      */
     template <typename FmtContext>
     constexpr auto format(const dsp::kf::message_view_owned& msg, FmtContext& ctx) const {
-        if (m_format_spec.find('l') != std::string_view::npos) {
+        if (m_format_spec.empty() || m_format_spec.find('l') != std::string_view::npos) {
             fmt::format_to(
                 ctx.out(),
                 "{} [{}] at offset {} ",

@@ -33,6 +33,7 @@ namespace dsp {
 
 class service;
 
+// TODO(naming): ?
 class northbound_builder {
     friend service;
 
@@ -87,9 +88,14 @@ public:
         requires requires { std::is_base_of_v<handler_factory, Factory>; }
     void tcp_handler(Args&& ...args);
 
+    void kafka_handler(std::unique_ptr<kafka_handler_interface> handler);
+
 private:
     service* m_service_handle;
     std::any m_cfg;
+    std::any m_ctx;
+
+    std::unique_ptr<kafka_handler_interface> m_kafka_handler { nullptr };
 
     template <typename T>
     [[nodiscard]]
@@ -310,22 +316,26 @@ auto northbound_builder::kafka_props() -> std::shared_ptr<kf::properties> {
 }
 
 void southbound_builder::build() {
-    m_service_handle->m_southbound = std::make_unique<kafka_listener>(
-        std::move(cast<std::shared_ptr<dsp::kf::properties>>(m_cfg).operator*())
+    auto& sb = m_service_handle->m_southbound;
+
+    // TODO(design): Common class interface for different southbound interfaces.
+    sb = std::make_unique<kafka_listener>(
+        std::move(cast<std::shared_ptr<dsp::kf::properties>>(m_cfg).operator*()),
+        std::move(m_kafka_handler)
+    );
+
+    // TODO(refact): Bind context in constructor.
+    sb->bind_context(
+        context{
+            .stats = m_service_handle->m_metrics,
+            .cache = m_service_handle->m_cache,
+            .app = std::move(m_ctx)
+        }
     );
 }
 
 void southbound_builder::bind_context(std::any ctx) {
-    auto& sb = m_service_handle->m_southbound;
-    if (sb == nullptr) {
-        throw nova::exception("Southbound interface is not created");
-    }
-    sb->bind_context(
-        context{
-            .stats = m_service_handle->m_metrics,
-            .app = std::move(ctx)
-        }
-    );
+    m_ctx = std::move(ctx);
 }
 
 template <typename Factory, typename ...Args>
@@ -336,6 +346,10 @@ void southbound_builder::tcp_handler(Args&& ...args) {
         throw nova::exception("Cannot set a TCP handler on a non-TCP type southbound interface");
     }
     listener->set(std::make_shared<Factory>(m_service_handle->m_cache, std::forward<Args>(args)...));
+}
+
+void southbound_builder::kafka_handler(std::unique_ptr<kafka_handler_interface> handler) {
+    m_kafka_handler = std::move(handler);
 }
 
 auto southbound_builder::kafka_props() -> std::shared_ptr<kf::properties> {

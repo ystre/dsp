@@ -79,12 +79,8 @@ public:
         return m_kafka_client.try_send(msg);
     }
 
-    auto queue_size() const -> int {
-        return m_kafka_client.queue_size();
-    }
-
     void update(metrics_registry& metrics) override {
-        metrics.set("kafka_queue_size", queue_size());
+        metrics.set("kafka_queue_size", m_kafka_client.queue_size());
     }
 
 private:
@@ -93,39 +89,77 @@ private:
 };
 
 class kafka_listener : public southbound_interface {
+    struct metrics {
+        std::uint64_t n_messages;
+        std::uint64_t n_bytes;
+    };
+
 public:
-    kafka_listener(kf::properties props)
+    kafka_listener(kf::properties props, std::unique_ptr<kafka_handler_interface> handler)
         : m_kafka_client(std::move(props))
+        , m_handler(std::move(handler))         // TODO: not_null
     {}
 
+    /**
+     * @brief   Create listener function.
+     *
+     * It is called by DSP framework when the service is started.
+     *
+     * The listener function must contain an event-loop.
+     *
+     * TODO(design): This should be a customization point. Provide a frame similarly
+     *               to `tcp_handler_frame` for convenience.
+     */
     auto listener() -> std::function<void()> override {
         return [this]() {
-            nova::topic_log::info("dsp", "Starting Kafka consumer (consuming topics: {})", m_topics);
+            nova::topic_log::info("dsp", "Starting Kafka listener (consuming topics: {})", m_topics);
             m_kafka_client.subscribe(m_topics);
+
             while (m_alive) {
                 for (auto& message : m_kafka_client.consume(m_batch_size)) {
-                    m_handler.process(message);
+                    m_metrics.n_messages += 1;
+                    m_metrics.n_bytes += message.payload().size();
+                    m_handler->process(message);
                 }
             }
+
+            nova::topic_log::info("dsp", "Kafka listener stopped");
         };
     }
 
     void stop() override {
+        nova::topic_log::debug("dsp", "Stopping Kafka listener...");
         m_alive.store(false);
     }
 
-    void bind_context(context) override {
-        // TODO(feat): Use context (cache).
+    // TODO(refact): Bind context in constructor.
+    void bind_context(context ctx) override {
+        m_handler->bind_context(std::move(ctx));
+    }
+
+    /**
+     * @brief   Update Kafka client metrics.
+     *
+     * These metrics are internal to the underlying client and are opaque
+     * to the client code.
+     *
+     * TODO(design): Where/how to handle internal statistics from callback.
+     *               Idea: this should be an integration point of different
+     *               interfaces instead of coupling metrics with Kafka clients.
+     */
+    void update(metrics_registry&) override {
+        // NO-OP
     }
 
 private:
     kf::consumer m_kafka_client;
-    kafka_message_handler m_handler;
+    std::unique_ptr<kafka_handler_interface> m_handler;
 
     std::atomic_bool m_alive { true };
     std::size_t m_batch_size { 10 };                        // TODO(cfg): Make it configurable.
     std::vector<std::string> m_topics { "dev-test" };       // TODO(cfg): Make it configurable.
 
+    metrics m_metrics;
 };
 
 class tcp_listener : public southbound_interface {

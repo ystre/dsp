@@ -121,7 +121,6 @@ private:
 
             buf.commit(n);
             m_metrics->buffer += n;
-            m_metrics->buffer_capacity = buf.capacity();
 
             try {
                 while (

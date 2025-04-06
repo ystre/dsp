@@ -30,10 +30,8 @@
 #include <filesystem>
 #include <memory>
 
-namespace logging = nova::topic_log;
-
 auto log_error(const nova::error& error) {
-    logging::error("dsp", "{}", error.message);
+    nova::topic_log::error("dsp", "{}", error.message);
     return nova::expected<std::string, nova::error>{ nova::unexpect, error };
 }
 
@@ -42,7 +40,7 @@ auto fatal(const nova::error& error) -> nova::expected<std::string, nova::error>
 }
 
 auto read_config(const std::string& path) {
-    logging::debug("dsp", "Reading config from `{}`", path);
+    nova::topic_log::debug("dsp", "Reading config from `{}`", path);
     return nova::expected<nova::yaml, nova::error>{
         nova::yaml(std::filesystem::path(path))
     };
@@ -58,7 +56,7 @@ public:
     {}
 
     void handle_error(dsp::kf::message_view message) override {
-        // logging::error("app", "Delivery error to [{}] ({})", message.topic_name(), message.errstr());
+        // nova::topic_log::error("app", "Delivery error to [{}] ({})", message.topic_name(), message.errstr());
         m_metrics->increment("drop_messages_total", 1,                      { { "drop_type", "kafka_delivery" } });
         m_metrics->increment("drop_bytes_total", message.payload().size(),  { { "drop_type", "kafka_delivery" } });
     }
@@ -67,7 +65,7 @@ public:
         // auto topic_name = message.topic_name();
         // boost::replace_all(topic_name, "-", "_");
 
-        // logging::trace("app", "Kafka delivery success to {}", message.topic_name());
+        // nova::topic_log::trace("app", "Kafka delivery success to {}", message.topic_name());
         m_metrics->increment("sent_messages_total", 1,                      { { "topic", "na" } });
         m_metrics->increment("sent_bytes_total", message.payload().size(),  { { "topic", "na" } });
     }
@@ -113,11 +111,35 @@ struct statistics_handler : public dsp::kf::statistics_handler {
 struct custom_northbound : public dsp::northbound_interface {
     bool send(const dsp::message& msg) override {
         const auto str = nova::data_view{ msg.payload }.as_string();
-        logging::trace("app", "Message: {}", str);
+        nova::topic_log::trace("app", "Message: {}", str);
         return true;
     }
 
     void stop() override { /* NO-OP */ }
+};
+
+class kafka_message_handler : public dsp::kafka_handler_interface {
+public:
+    void process(dsp::kf::message_view_owned& message) override {
+        nova::topic_log::trace("app", "Message received {:lkvh}", message);
+
+        const auto msg = dsp::message{
+            .key = message.key().to_vec(),
+            .subject = "dev-test-out",
+            .properties = {},
+            .payload = message.payload().to_vec()
+        };
+
+        m_ctx.cache->send(msg);
+    }
+
+    void bind_context(dsp::context ctx) override {
+        m_ctx = std::move(ctx);
+    }
+
+private:
+    dsp::context m_ctx;
+
 };
 
 class oam_handler {
@@ -130,10 +152,10 @@ public:
     void operator()(const http::request<http::string_body>& req, http::response<http::string_body>& res) {
         if (req.method() == http::verb::post && req.target() == "/reload") {
             if (const auto code = nova::read_file(m_script_path); not code.has_value()) {
-                logging::warn("oam", "{}", code.error().message);
+                nova::topic_log::warn("oam", "{}", code.error().message);
             } else {
                 m_ctx->script = *code;
-                logging::info("oam", "Script is reloaded");
+                nova::topic_log::info("oam", "Script is reloaded");
             }
         } else {
             res.result(http::status::not_found);
@@ -200,32 +222,34 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
         nb_builder.kafka_props()->statistics_callback(std::make_unique<statistics_handler>(service.get_metrics()));
         nb_builder.build();
     } catch (const std::exception& ex) {
-        logging::warn("app", "Cannot attach Kafka callbacks, northbound interface is either not enabled or not a Kafka producer");
+        nova::topic_log::warn("app", "Cannot attach Kafka callbacks, northbound interface is either not enabled or not a Kafka producer");
     }
 
-    auto app_cfg = std::make_shared<app::context>();
-    app_cfg->router = dsp::router{ };
+    auto app_ctx = std::make_shared<app::context>();
+    app_ctx->router = dsp::router{ };
 
     auto sb_builder = service.cfg_southbound();
 
     try {
         sb_builder.tcp_handler<app::factory>(read_handler_cfg(*cfg));
     } catch (const std::exception& ex) {
-        logging::warn("app", "Cannot attach TCP handler, southbound interface is not configured to be a TCP listener");
+        nova::topic_log::warn("app", "Cannot attach TCP handler, southbound interface is not configured to be a TCP listener");
     }
 
     try {
+        std::unique_ptr<dsp::kafka_handler_interface> handler = std::make_unique<kafka_message_handler>();
+        sb_builder.kafka_handler(std::move(handler));
         sb_builder.kafka_props()->offset_earliest();
     } catch (const std::exception& ex) {
-        logging::warn("app", "Cannot set Kafka property, southbound interface is not configured to be a Kafka listener");
+        nova::topic_log::warn("app", "Cannot set Kafka property, southbound interface is not configured to be a Kafka listener");
     }
 
     // TODO(refact): Metrics are provided and bound by the framework, but relies on this call.
     try {
         // TODO(design): Bind context before creating the interface.
-        sb_builder.bind_context(std::make_any<AppContext>(app_cfg));
+        sb_builder.bind_context(std::make_any<AppContext>(app_ctx));
     } catch (const std::exception& ex) {
-        logging::warn("app", "Cannot bind context: {}", ex.what());
+        nova::topic_log::warn("app", "Cannot bind context: {}", ex.what());
     }
 
     sb_builder.build();
