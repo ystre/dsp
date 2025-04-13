@@ -43,7 +43,7 @@ public:
      * @brief   Build the interface, i.e., finish configuring.
      */
     void build();
-    auto kafka_props() -> std::shared_ptr<kf::properties>;
+    auto kafka_props() -> kf::properties&;
 
 private:
     std::string m_name;
@@ -65,10 +65,18 @@ private:
 class southbound_builder {
     friend service;
 
+    enum class type {
+        empty,
+        tcp,
+        kafka
+    };
+
 public:
 
     /**
      * @brief   Build the interface, i.e., finish configuring.
+     *
+     * This function is responsible for binding DSP context with the interface.
      */
     void build();
 
@@ -77,9 +85,9 @@ public:
      *
      * It is wrapped in DSP context and forwarded to the interface.
      */
-    void bind_context(std::any ctx);
+    void bind_context(std::any appctx);
 
-    auto kafka_props() -> std::shared_ptr<kf::properties>;
+    auto kafka_props() -> kf::properties&;
 
     /**
      * @brief   Create a handler factory and attach it to the service.
@@ -93,9 +101,12 @@ public:
 private:
     service* m_service_handle;
     std::any m_cfg;
-    std::any m_ctx;
+    std::any m_appctx;
+
+    type m_type { type::empty };
 
     std::unique_ptr<kafka_handler_interface> m_kafka_handler { nullptr };
+    std::shared_ptr<handler_factory> m_tcp_factory { nullptr };
 
     template <typename T>
     [[nodiscard]]
@@ -106,6 +117,9 @@ private:
             throw nova::exception("{}", ex.what());
         }
     }
+
+    void build_kafka();
+    void build_tcp();
 
 };
 
@@ -186,21 +200,24 @@ public:
 
         if (const auto sbi_type = lookup<std::string>("interfaces.southbound.type"); sbi_type == "tcp") {
             const auto port = lookup<tcp::port_type>("interfaces.southbound.port");
-            m_southbound = std::make_unique<tcp_listener>(tcp::net_config{ "0.0.0.0", port });
+            builder.m_cfg = std::make_any<tcp::net_config>("0.0.0.0", port);
         } else if (sbi_type == "kafka") {
-            auto kafka_cfg = std::make_shared<kf::properties>();
-            kafka_cfg->bootstrap_server(lookup<std::string>("interfaces.southbound.address"));
-            kafka_cfg->group_id(lookup<std::string>("interfaces.southbound.groupid"));
+            auto cfg = std::make_shared<kafka_cfg>();
+            cfg->props.bootstrap_server(lookup<std::string>("interfaces.southbound.address"));
+            cfg->props.group_id(lookup<std::string>("interfaces.southbound.groupid"));
 
             // TODO(cfg): generic librdkafka config
-            // kafka_cfg->set("debug", "all");
+            // cfg->props.set("debug", "all");
 
             // FIXME: yaml.lookup with non-existent key
             try {
-                kafka_cfg->statistics_interval(lookup<std::string>("interfaces.southbound.statistics-interval-ms"));
+                cfg->props.statistics_interval(lookup<std::string>("interfaces.southbound.statistics-interval-ms"));
             } catch (...) {}
 
-            builder.m_cfg = std::make_any<std::shared_ptr<kf::properties>>(kafka_cfg);
+            cfg->topics = lookup<std::vector<std::string>>("interfaces.southbound.topics");
+            cfg->batch_size = lookup<std::size_t>("interfaces.southbound.batchSize");
+
+            builder.m_cfg = std::make_any<std::shared_ptr<kafka_cfg>>(cfg);
         } else if (sbi_type == "custom") {
             /* NO-OP */
         } else {
@@ -302,7 +319,7 @@ private:
 
 };
 
-void northbound_builder::build() {
+inline void northbound_builder::build() {
     m_service_handle->m_cache->attach_northbound(
         m_name,
         std::make_unique<kafka_producer>(
@@ -311,49 +328,70 @@ void northbound_builder::build() {
     );
 }
 
-auto northbound_builder::kafka_props() -> std::shared_ptr<kf::properties> {
-    return cast<std::shared_ptr<dsp::kf::properties>>(m_cfg);
+inline auto northbound_builder::kafka_props() -> kf::properties& {
+    return cast<std::shared_ptr<dsp::kf::properties>>(m_cfg).operator*();
 }
 
-void southbound_builder::build() {
+inline void southbound_builder::build() {
+    if (not m_appctx.has_value()) {
+        nova::topic_log::warn("dsp", "Application context is empty");
+    }
+
+    switch (m_type) {
+        case type::empty:   throw nova::exception("Southbound handler is not set");
+        case type::tcp:     build_tcp();    break;
+        case type::kafka:   build_kafka();  break;
+    }
+}
+
+inline void southbound_builder::build_kafka() {
     auto& sb = m_service_handle->m_southbound;
 
-    // TODO(design): Common class interface for different southbound interfaces.
     sb = std::make_unique<kafka_listener>(
-        std::move(cast<std::shared_ptr<dsp::kf::properties>>(m_cfg).operator*()),
-        std::move(m_kafka_handler)
-    );
-
-    // TODO(refact): Bind context in constructor.
-    sb->bind_context(
         context{
             .stats = m_service_handle->m_metrics,
             .cache = m_service_handle->m_cache,
-            .app = std::move(m_ctx)
-        }
+            .app = std::move(m_appctx)
+        },
+        std::move(cast<std::shared_ptr<kafka_cfg>>(m_cfg).operator*()),
+        std::move(m_kafka_handler)
     );
 }
 
-void southbound_builder::bind_context(std::any ctx) {
-    m_ctx = std::move(ctx);
+inline void southbound_builder::build_tcp() {
+    auto& sb = m_service_handle->m_southbound;
+
+    auto listener = std::make_unique<tcp_listener>(
+        context{
+            .stats = m_service_handle->m_metrics,
+            .cache = m_service_handle->m_cache,
+            .app = std::move(m_appctx)
+        },
+        cast<tcp::net_config>(m_cfg),
+        m_tcp_factory
+    );
+
+    sb = std::move(listener);
+}
+
+inline void southbound_builder::bind_context(std::any appctx) {
+    m_appctx = std::move(appctx);
 }
 
 template <typename Factory, typename ...Args>
     requires requires { std::is_base_of_v<handler_factory, Factory>; }
 void southbound_builder::tcp_handler(Args&& ...args) {
-    auto* listener = dynamic_cast<tcp_listener*>(m_service_handle->m_southbound.get());
-    if (listener == nullptr) {
-        throw nova::exception("Cannot set a TCP handler on a non-TCP type southbound interface");
-    }
-    listener->set(std::make_shared<Factory>(m_service_handle->m_cache, std::forward<Args>(args)...));
+    m_tcp_factory = std::make_shared<Factory>(std::forward<Args>(args)...);
+    m_type = type::tcp;
 }
 
-void southbound_builder::kafka_handler(std::unique_ptr<kafka_handler_interface> handler) {
+inline void southbound_builder::kafka_handler(std::unique_ptr<kafka_handler_interface> handler) {
     m_kafka_handler = std::move(handler);
+    m_type = type::kafka;
 }
 
-auto southbound_builder::kafka_props() -> std::shared_ptr<kf::properties> {
-    return cast<std::shared_ptr<dsp::kf::properties>>(m_cfg);
+inline auto southbound_builder::kafka_props() -> kf::properties& {
+    return cast<std::shared_ptr<kafka_cfg>>(m_cfg)->props;
 }
 
 } // namespace dsp

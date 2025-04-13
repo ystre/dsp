@@ -12,11 +12,13 @@ dsp:
       address: localhost:9092
       groupid: dsp-consumer
       topics: ["dev-test"]
+      batchSize: 10
     northbound:
       enabled: false
       name: main-nb
       type: kafka
       address: localhost:9092
+      topic: "dev-test"         # TODO: Read main/default topic from config.
     metrics:
       enabled: true
       port: 9555

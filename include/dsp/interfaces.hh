@@ -88,6 +88,13 @@ private:
 
 };
 
+struct kafka_cfg {
+    kf::properties props;
+    std::vector<std::string> topics;
+    std::size_t batch_size;
+
+};
+
 class kafka_listener : public southbound_interface {
     struct metrics {
         std::uint64_t n_messages;
@@ -95,10 +102,14 @@ class kafka_listener : public southbound_interface {
     };
 
 public:
-    kafka_listener(kf::properties props, std::unique_ptr<kafka_handler_interface> handler)
-        : m_kafka_client(std::move(props))
+    kafka_listener(context ctx, kafka_cfg cfg, std::unique_ptr<kafka_handler_interface> handler)
+        : m_kafka_client(std::move(cfg.props))
         , m_handler(std::move(handler))         // TODO: not_null
-    {}
+        , m_batch_size(cfg.batch_size)
+        , m_topics(std::move(cfg.topics))
+    {
+        bind_context(std::move(ctx));
+    }
 
     /**
      * @brief   Create listener function.
@@ -132,11 +143,6 @@ public:
         m_alive.store(false);
     }
 
-    // TODO(refact): Bind context in constructor.
-    void bind_context(context ctx) override {
-        m_handler->bind_context(std::move(ctx));
-    }
-
     /**
      * @brief   Update Kafka client metrics.
      *
@@ -156,17 +162,26 @@ private:
     std::unique_ptr<kafka_handler_interface> m_handler;
 
     std::atomic_bool m_alive { true };
-    std::size_t m_batch_size { 10 };                        // TODO(cfg): Make it configurable.
-    std::vector<std::string> m_topics { "dev-test" };       // TODO(cfg): Make it configurable.
+    std::size_t m_batch_size { 1 };
+    std::vector<std::string> m_topics;
 
     metrics m_metrics;
+
+    void bind_context(context ctx) override {
+        m_handler->bind_context(std::move(ctx));
+    }
+
 };
 
 class tcp_listener : public southbound_interface {
 public:
-    tcp_listener(const tcp::net_config& cfg)
+    tcp_listener(context ctx, const tcp::net_config& cfg, std::shared_ptr<handler_factory> factory)
         : m_tcp_server(cfg)
-    {}
+        , m_handler_factory(std::move(factory))
+    {
+        bind_context(std::move(ctx));
+        m_tcp_server.set(m_handler_factory);
+    }
 
     auto listener() -> std::function<void()> override {
         return [this]() {
@@ -179,28 +194,19 @@ public:
         m_tcp_server.stop();
     }
 
-    /**
-     * @brief   Set TCP handler factory.
-     */
-    void set(std::shared_ptr<handler_factory> factory) {
-        m_handler_factory = std::move(factory);
-        m_tcp_server.set(m_handler_factory);
-    }
-
-    void bind_context(context ctx) override {
-        m_handler_factory->context(std::move(ctx));
-    }
-
     void update(metrics_registry& metrics) override {
         const auto& m = m_tcp_server.metrics();
         metrics.set("connection_count", m.n_connections.load());
         metrics.set("tcp_buffer_size", m.buffer.load());
-        metrics.set("tcp_buffer_capacity", m.buffer_capacity.load());
     }
 
 private:
     tcp::server m_tcp_server;
     std::shared_ptr<handler_factory> m_handler_factory;
+
+    void bind_context(context ctx) override {
+        m_handler_factory->context(std::move(ctx));
+    }
 
 };
 
