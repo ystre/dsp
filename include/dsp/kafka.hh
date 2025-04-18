@@ -100,6 +100,14 @@ namespace detail {
             return m_message_ptr->err == RD_KAFKA_RESP_ERR_NO_ERROR;
         }
 
+        [[nodiscard]] auto error_code() const -> int {
+            return m_message_ptr->err;
+        }
+
+        [[nodiscard]] auto error_message() const -> std::string_view {
+            return { rd_kafka_err2str(m_message_ptr->err) };
+        }
+
         [[nodiscard]] auto eof() const -> bool {
             return m_message_ptr->err == RD_KAFKA_RESP_ERR__PARTITION_EOF;
         }

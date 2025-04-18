@@ -21,12 +21,14 @@
 
 namespace dsp {
 
+namespace tcp {
+
 /**
  * @brief   TCP handler factory with DSP context.
  */
-class handler_factory : public tcp::handler_factory {
+class handler_factory : public tcp::handler_factory_interface {
 public:
-    virtual void context(context) { /* optional */ }
+    virtual void bind(context) { /* optional */ }
     virtual ~handler_factory() = default;
 };
 
@@ -103,34 +105,46 @@ private:
 
 };
 
-// TODO(naming): `handler`, as in TCP. Also, put into `kf` namespace.
-class kafka_handler_interface {
+} // namespace tcp
+
+namespace kf {
+
+class handler_interface {
 public:
     virtual void process(kf::message_view_owned& message) = 0;
 
-    // TODO(naming): Inconsistent with `context()` in TCP. Simply `bind()`?
-    //               Also, mind similar functions in DSP.
-    virtual void bind_context(context) { /* optional */ }
-    virtual ~kafka_handler_interface() = default;
+    virtual void bind(context) { /* optional */ }
+    virtual ~handler_interface() = default;
 };
 
-// template <typename Derived>
-// class kf_handler_frame : public kf::handler {
-    // struct metrics {
-        // std::size_t n_messages;
-        // std::size_t n_bytes;
-    // };
+template <typename Derived>
+class handler_frame : public kf::handler_interface {
+public:
+    void process(kf::message_view_owned& message) override {
+        if (not message.ok()) {
+            if (message.eof()) {
+                nova::topic_log::debug(
+                    "dsp",
+                    "End of partition: {}[{}] at offset {}",
+                    message.topic(),
+                    message.partition(),
+                    message.offset()
+                );
 
-// public:
-    // auto process(kf::message_view_owned& message) -> std::size_t override {
-        // if (not message.ok()) {}
-        // if (message.eof()) {}
+                return;
+            }
 
-        // m_metrics.n_messages += 1;
-        // m_metrics.n_bytes += message.payload().size();
+            nova::topic_log::warn("dsp", "Kafka error message: {}", message.error_message());
+            return;
+        }
 
-        // const auto msg_size = static_cast<Derived*>(this)->do_process(message);
-    // }
-// }
+        static_cast<Derived*>(this)->do_process(message);
+    }
+
+private:
+
+};
+
+} // namespace kf
 
 } // namespace dsp

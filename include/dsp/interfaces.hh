@@ -15,9 +15,13 @@
 #include "dsp/metrics.hh"
 #include "dsp/tcp.hh"
 
+#include <nova/log.hh>
+#include <nova/not_null.hh>
+
 #include <prometheus/exposer.h>
 #include <prometheus/registry.h>
 
+#include <chrono>
 #include <string>
 #include <utility>
 #include <memory>
@@ -34,7 +38,7 @@ public:
      *
      * It also contains an application context opaque to DSP framework.
      */
-    virtual void bind_context(context ctx) = 0;
+    virtual void bind(context ctx) = 0;
 
     /**
      * @brief   Return a listener function.
@@ -92,23 +96,19 @@ struct kafka_cfg {
     kf::properties props;
     std::vector<std::string> topics;
     std::size_t batch_size;
+    std::chrono::milliseconds poll_timeout;
 
 };
 
 class kafka_listener : public southbound_interface {
-    struct metrics {
-        std::uint64_t n_messages;
-        std::uint64_t n_bytes;
-    };
-
 public:
-    kafka_listener(context ctx, kafka_cfg cfg, std::unique_ptr<kafka_handler_interface> handler)
+    kafka_listener(context ctx, kafka_cfg cfg, std::unique_ptr<kf::handler_interface> handler)
         : m_kafka_client(std::move(cfg.props))
-        , m_handler(std::move(handler))         // TODO: not_null
+        , m_handler(std::move(handler))
         , m_batch_size(cfg.batch_size)
         , m_topics(std::move(cfg.topics))
     {
-        bind_context(std::move(ctx));
+        bind(std::move(ctx));
     }
 
     /**
@@ -127,9 +127,7 @@ public:
             m_kafka_client.subscribe(m_topics);
 
             while (m_alive) {
-                for (auto& message : m_kafka_client.consume(m_batch_size)) {
-                    m_metrics.n_messages += 1;
-                    m_metrics.n_bytes += message.payload().size();
+                for (auto& message : m_kafka_client.consume(m_batch_size, m_poll_timeout)) {
                     m_handler->process(message);
                 }
             }
@@ -146,40 +144,34 @@ public:
     /**
      * @brief   Update Kafka client metrics.
      *
-     * These metrics are internal to the underlying client and are opaque
-     * to the client code.
-     *
-     * TODO(design): Where/how to handle internal statistics from callback.
-     *               Idea: this should be an integration point of different
-     *               interfaces instead of coupling metrics with Kafka clients.
+     * Note: Curently there are no custom Kafka client metrics.
+     * Internal client (librdkafka) metrics are updated via statistics
+     * callback.
      */
-    void update(metrics_registry&) override {
-        // NO-OP
-    }
+    void update(metrics_registry&) override { /* NO-OP */ }
 
 private:
     kf::consumer m_kafka_client;
-    std::unique_ptr<kafka_handler_interface> m_handler;
+    nova::not_null<std::unique_ptr<kf::handler_interface>> m_handler;
 
     std::atomic_bool m_alive { true };
     std::size_t m_batch_size { 1 };
+    std::chrono::milliseconds m_poll_timeout { 100 };
     std::vector<std::string> m_topics;
 
-    metrics m_metrics;
-
-    void bind_context(context ctx) override {
-        m_handler->bind_context(std::move(ctx));
+    void bind(context ctx) override {
+        m_handler->bind(std::move(ctx));
     }
 
 };
 
 class tcp_listener : public southbound_interface {
 public:
-    tcp_listener(context ctx, const tcp::net_config& cfg, std::shared_ptr<handler_factory> factory)
+    tcp_listener(context ctx, const tcp::net_config& cfg, std::shared_ptr<tcp::handler_factory> factory)
         : m_tcp_server(cfg)
         , m_handler_factory(std::move(factory))
     {
-        bind_context(std::move(ctx));
+        bind(std::move(ctx));
         m_tcp_server.set(m_handler_factory);
     }
 
@@ -202,10 +194,10 @@ public:
 
 private:
     tcp::server m_tcp_server;
-    std::shared_ptr<handler_factory> m_handler_factory;
+    std::shared_ptr<tcp::handler_factory> m_handler_factory;
 
-    void bind_context(context ctx) override {
-        m_handler_factory->context(std::move(ctx));
+    void bind(context ctx) override {
+        m_handler_factory->bind(std::move(ctx));
     }
 
 };

@@ -39,7 +39,7 @@ struct context {
     std::string script;
 };
 
-class handler : public dsp::handler_frame<handler> {
+class handler : public dsp::tcp::handler_frame<handler> {
 public:
     handler(const dsp::context& ctx)
         : m_ctx(ctx)
@@ -59,7 +59,7 @@ private:
 
 };
 
-class passthrough_handler : public dsp::handler_frame<passthrough_handler> {
+class passthrough_handler : public dsp::tcp::handler_frame<passthrough_handler> {
 public:
     passthrough_handler(const dsp::context& ctx)
         : m_ctx(ctx)
@@ -76,7 +76,7 @@ private:
 
 };
 
-class factory : public dsp::handler_factory {
+class factory : public dsp::tcp::handler_factory {
 public:
     factory(handler_type type)
         : m_type(type)
@@ -90,7 +90,7 @@ public:
         nova::unreachable();
     }
 
-    void context(dsp::context ctx) override {
+    void bind(dsp::context ctx) override {
         m_ctx = std::move(ctx);
     }
 

@@ -118,15 +118,9 @@ struct custom_northbound : public dsp::northbound_interface {
     void stop() override { /* NO-OP */ }
 };
 
-class kafka_message_handler : public dsp::kafka_handler_interface {
+class kafka_message_handler : public dsp::kf::handler_frame<kafka_message_handler> {
 public:
-    void process(dsp::kf::message_view_owned& message) override {
-        if (not message.ok()) {
-            // TODO(design): Provide a Kafka consumer frame for boilerplate.
-            nova::topic_log::warn("app", "Error {:v}", message);
-            return;
-        }
-
+    void do_process(dsp::kf::message_view_owned& message) {
         nova::topic_log::trace("app", "Message received {:lkvh}", message);
 
         const auto msg = dsp::message{
@@ -139,7 +133,7 @@ public:
         m_ctx.cache->send(msg);
     }
 
-    void bind_context(dsp::context ctx) override {
+    void bind(dsp::context ctx) override {
         m_ctx = std::move(ctx);
     }
 
@@ -239,14 +233,14 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
     if (const auto sb = cfg->lookup<std::string>("dsp.interfaces.southbound.type"); sb == "tcp") {
         sb_builder.tcp_handler<app::factory>(read_handler_cfg(*cfg));
     } else if (sb == "kafka") {
-        std::unique_ptr<dsp::kafka_handler_interface> handler = std::make_unique<kafka_message_handler>();
+        std::unique_ptr<dsp::kf::handler_interface> handler = std::make_unique<kafka_message_handler>();
         sb_builder.kafka_handler(std::move(handler));
         sb_builder.kafka_props().offset_earliest();
     } else {
         nova::topic_log::critical("app", "Invalid southbound configuration: {}", sb);
     }
 
-    sb_builder.bind_context(std::make_any<AppContext>(app_ctx));
+    sb_builder.bind(std::make_any<AppContext>(app_ctx));
     sb_builder.build();
 
     service.northbound("custom-nb", std::make_unique<custom_northbound>());

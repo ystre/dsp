@@ -35,10 +35,10 @@ public:
 };
 // end::tcp-handler[]
 
-class handler_factory {
+class handler_factory_interface {
 public:
     virtual auto create() -> std::unique_ptr<handler> = 0;
-    virtual ~handler_factory() = default;
+    virtual ~handler_factory_interface() = default;
 };
 
 } // namespace dsp::tcp

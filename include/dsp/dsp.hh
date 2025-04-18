@@ -85,7 +85,7 @@ public:
      *
      * It is wrapped in DSP context and forwarded to the interface.
      */
-    void bind_context(std::any appctx);
+    void bind(std::any appctx);
 
     auto kafka_props() -> kf::properties&;
 
@@ -93,10 +93,10 @@ public:
      * @brief   Create a handler factory and attach it to the service.
      */
     template <typename Factory, typename ...Args>
-        requires requires { std::is_base_of_v<handler_factory, Factory>; }
+        requires requires { std::is_base_of_v<tcp::handler_factory, Factory>; }
     void tcp_handler(Args&& ...args);
 
-    void kafka_handler(std::unique_ptr<kafka_handler_interface> handler);
+    void kafka_handler(std::unique_ptr<kf::handler_interface> handler);
 
 private:
     service* m_service_handle;
@@ -105,8 +105,8 @@ private:
 
     type m_type { type::empty };
 
-    std::unique_ptr<kafka_handler_interface> m_kafka_handler { nullptr };
-    std::shared_ptr<handler_factory> m_tcp_factory { nullptr };
+    std::unique_ptr<kf::handler_interface> m_kafka_handler { nullptr };
+    std::shared_ptr<tcp::handler_factory> m_tcp_factory { nullptr };
 
     template <typename T>
     [[nodiscard]]
@@ -216,6 +216,9 @@ public:
 
             cfg->topics = lookup<std::vector<std::string>>("interfaces.southbound.topics");
             cfg->batch_size = lookup<std::size_t>("interfaces.southbound.batchSize");
+
+            // TODO(refact): Parse chrono from YAML.
+            cfg->poll_timeout = std::chrono::milliseconds{ lookup<long>("interfaces.southbound.pollTimeoutMs") };
 
             builder.m_cfg = std::make_any<std::shared_ptr<kafka_cfg>>(cfg);
         } else if (sbi_type == "custom") {
@@ -374,18 +377,18 @@ inline void southbound_builder::build_tcp() {
     sb = std::move(listener);
 }
 
-inline void southbound_builder::bind_context(std::any appctx) {
+inline void southbound_builder::bind(std::any appctx) {
     m_appctx = std::move(appctx);
 }
 
 template <typename Factory, typename ...Args>
-    requires requires { std::is_base_of_v<handler_factory, Factory>; }
+    requires requires { std::is_base_of_v<tcp::handler_factory, Factory>; }
 void southbound_builder::tcp_handler(Args&& ...args) {
     m_tcp_factory = std::make_shared<Factory>(std::forward<Args>(args)...);
     m_type = type::tcp;
 }
 
-inline void southbound_builder::kafka_handler(std::unique_ptr<kafka_handler_interface> handler) {
+inline void southbound_builder::kafka_handler(std::unique_ptr<kf::handler_interface> handler) {
     m_kafka_handler = std::move(handler);
     m_type = type::kafka;
 }

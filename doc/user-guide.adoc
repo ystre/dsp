@@ -119,7 +119,7 @@ public:
     void do_eof();
 };
 
-class factory : public dsp::tcp::handler_factory {
+class factory : public dsp::tcp::handler_factory_interface {
 public:
     factory(std::shared_ptr<dsp::cache> cache);
     auto create() -> std::unique_ptr<dsp::tcp::handler> override;
