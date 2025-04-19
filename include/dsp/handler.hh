@@ -21,6 +21,32 @@
 
 namespace dsp {
 
+struct perf_metrics {
+    std::size_t n_messages;
+    std::size_t n_bytes;
+    nova::stopwatch uptime;
+};
+
+// FIXME: `nova::stopwatch::elapsed()` should be const.
+[[nodiscard]] inline
+auto perf_summary(perf_metrics& metrics) -> std::string {
+    const auto elapsed = nova::to_sec(metrics.uptime.elapsed());
+    const auto mbps = static_cast<double>(metrics.n_bytes) / elapsed / nova::units::constants::MByte;
+    const auto mps  = static_cast<double>(metrics.n_messages) / elapsed / nova::units::constants::kilo;
+
+    // FIXME: NaNs for very short lived connections.
+    auto summary = fmt::format(
+        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds (total: {} bytes, {} messages)",
+        mbps,
+        mps,
+        elapsed,
+        metrics.n_bytes,
+        metrics.n_messages
+    );
+
+    return summary;
+}
+
 namespace tcp {
 
 /**
@@ -50,8 +76,8 @@ public:
             return 0;
         }
 
-        ++m_connection_metrics.n_messages;
-        m_connection_metrics.n_bytes += msg_size;
+        ++m_metrics.n_messages;
+        m_metrics.n_bytes += msg_size;
 
         return msg_size;
     }
@@ -76,32 +102,18 @@ public:
     }
 
 protected:
-    [[nodiscard]] auto n_bytes()    const { return m_connection_metrics.n_bytes; }
-    [[nodiscard]] auto n_messages() const { return m_connection_metrics.n_messages; }
+    [[nodiscard]] auto n_bytes()    const { return m_metrics.n_bytes; }
+    [[nodiscard]] auto n_messages() const { return m_metrics.n_messages; }
 
-    [[nodiscard]] auto uptime() { return m_timer.elapsed(); }
+    // FIXME: const
+    [[nodiscard]] auto uptime() { return m_metrics.uptime.elapsed(); }
 
     [[nodiscard]] auto perf_summary() -> std::string {
-        const auto elapsed = nova::to_sec(uptime());
-        const auto mbps = static_cast<double>(n_bytes()) / elapsed / nova::units::constants::MByte;
-        const auto mps  = static_cast<double>(n_messages()) / elapsed / nova::units::constants::kilo;
-
-        // FIXME: NaNs for very short lived connections.
-        auto summary = fmt::format(
-            "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds (total: {} bytes, {} messages)",
-            mbps,
-            mps,
-            elapsed,
-            n_bytes(),
-            n_messages()
-        );
-
-        return summary;
+        return dsp::perf_summary(m_metrics);
     }
 
 private:
-    connection_metrics m_connection_metrics {};
-    nova::stopwatch m_timer;
+    perf_metrics m_metrics {};
 
 };
 

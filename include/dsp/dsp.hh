@@ -191,8 +191,8 @@ public:
      * @brief   Configure a southbound interface.
      *
      * Supported interface types:
-     * - TCP listener (immediately created)
-     * - Kafka listener (deferred creation via builder)
+     * - TCP listener
+     * - Kafka listener
      */
     auto cfg_southbound() -> southbound_builder {
         auto builder = southbound_builder{ };
@@ -205,6 +205,7 @@ public:
             auto cfg = std::make_shared<kafka_cfg>();
             cfg->props.bootstrap_server(lookup<std::string>("interfaces.southbound.address"));
             cfg->props.group_id(lookup<std::string>("interfaces.southbound.groupid"));
+            cfg->props.enable_partition_eof();
 
             // TODO(cfg): generic librdkafka config
             // cfg->props.set("debug", "all");
@@ -233,10 +234,6 @@ public:
     auto cfg_northbound() -> northbound_builder {
         auto builder = northbound_builder{ };
         builder.m_service_handle = this;
-
-        if (lookup<std::string>("interfaces.northbound.type") == "custom") {
-            return builder;
-        }
 
         if (const auto nbi_type = lookup<std::string>("interfaces.northbound.type"); nbi_type == "kafka") {
             if (not lookup<bool>("interfaces.northbound.enabled")) {

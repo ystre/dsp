@@ -912,7 +912,6 @@ private:
 
 } // namespace dsp::kf
 
-
 template <>
 class fmt::formatter<dsp::kf::message_view_owned> {
 public:
@@ -979,32 +978,4 @@ public:
 
 private:
     std::string_view m_format_spec;
-};
-
-// TODO(refact): Move it into Nova.
-template <>
-class fmt::formatter<nova::data_view> {
-public:
-    constexpr auto parse(format_parse_context& ctx) {
-        return ctx.begin();
-    }
-
-    template <typename FmtContext>
-    auto format(nova::data_view data, FmtContext& ctx) const {
-        if (is_printable(data)) {
-            return fmt::format_to(ctx.out(), "{}", data.as_string());
-        }
-        return fmt::format_to(ctx.out(), "x{}", data.as_hex_string());
-    }
-
-private:
-    [[nodiscard]] static auto is_printable(nova::data_view data) -> bool {
-        return not std::ranges::any_of(data, [](auto b) { return not is_printable(b); });
-    }
-
-    [[nodiscard]] static auto is_printable(std::byte b) -> bool {
-        const auto r = nova::ascii::PrintableRange;
-        const auto ch = std::to_integer<char>(b);
-        return r.low <= ch && ch <= r.high;
-    }
 };

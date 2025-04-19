@@ -4,6 +4,7 @@
  * An example service that is used for testing.
  */
 
+#include "dsp/handler.hh"
 #include "handler.hh"
 
 #include <dsp/dsp.hh>
@@ -26,9 +27,13 @@
 #include <sys/syslog.h>
 
 #include <any>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
+
+using AppContext = std::shared_ptr<app::context>;
 
 auto log_error(const nova::error& error) {
     nova::topic_log::error("dsp", "{}", error.message);
@@ -56,7 +61,7 @@ public:
     {}
 
     void handle_error(dsp::kf::message_view message) override {
-        // nova::topic_log::error("app", "Delivery error to [{}] ({})", message.topic_name(), message.errstr());
+        nova::topic_log::error("app", "Delivery error to [{}] ({})", message.topic(), message.error_message());
         m_metrics->increment("drop_messages_total", 1,                      { { "drop_type", "kafka_delivery" } });
         m_metrics->increment("drop_bytes_total", message.payload().size(),  { { "drop_type", "kafka_delivery" } });
     }
@@ -118,27 +123,79 @@ struct custom_northbound : public dsp::northbound_interface {
     void stop() override { /* NO-OP */ }
 };
 
-class kafka_message_handler : public dsp::kf::handler_frame<kafka_message_handler> {
+/**
+ * @brief   Custom message handler for performance measuring.
+ */
+class kafka_message_handler : public dsp::kf::handler_interface {
 public:
-    void do_process(dsp::kf::message_view_owned& message) {
-        nova::topic_log::trace("app", "Message received {:lkvh}", message);
 
-        const auto msg = dsp::message{
-            .key = message.key().to_vec(),
-            .subject = "dev-test-out",
-            .properties = {},
-            .payload = message.payload().to_vec()
-        };
+    /**
+     * @brief   Reimplementing `dsp::kf::handler_frame` because of custom EOF handling.
+     *
+     * Starts a timer at the first non-error message.
+     * Logs statistics at EOF.
+     *
+     * TODO(feat): Measure each partition separately.
+     */
+    void process(dsp::kf::message_view_owned& message) override {
+        if (not message.ok()) {
+            if (message.eof()) {
+                nova::topic_log::debug("app", "End of partition {}[{}] at offset {}", message.topic(), message.partition(), message.offset());
 
-        m_ctx.cache->send(msg);
+                if (m_metrics.has_value()) {
+                    nova::topic_log::info("app", "{}", perf_summary(*m_metrics));
+                    nova::topic_log::debug("app", "Stopping application... (SIGINT)");
+                    std::raise(SIGINT);
+                    m_metrics = std::nullopt;
+                }
+
+                return;
+            }
+
+            nova::topic_log::warn("app", "Error message: {} ({})", message.error_message(), message.error_code());
+            return;
+        }
+
+        if (not m_metrics.has_value()) {
+            m_metrics = dsp::perf_metrics{ };
+        }
+
+        do_process(message);
     }
 
     void bind(dsp::context ctx) override {
+        m_appctx = std::any_cast<AppContext>(ctx.app);
         m_ctx = std::move(ctx);
     }
 
 private:
     dsp::context m_ctx;
+    AppContext m_appctx;
+
+    std::optional<dsp::perf_metrics> m_metrics {};
+
+    void do_process(dsp::kf::message_view_owned& message) {
+        static const auto LabelLoadShed = std::map<std::string, std::string>{ { "drop_type", "load_shed" } };
+
+        nova::topic_log::trace("app", "Message received {:lkvh}", message);
+
+        const auto msg = dsp::message{
+            .key = message.key().to_vec(),
+            .subject = m_appctx->topic,
+            .properties = {},
+            .payload = message.payload().to_vec()
+        };
+
+        m_ctx.stats->increment("process_messages_total", 1);
+        m_ctx.stats->increment("process_bytes_total", msg.payload.size());
+        m_metrics->n_messages += 1;
+        m_metrics->n_bytes += msg.payload.size();
+
+        if (not m_ctx.cache->send(msg)) {
+            m_ctx.stats->increment("drop_messages_total", 1, LabelLoadShed);
+            m_ctx.stats->increment("drop_bytes_total", msg.payload.size(), LabelLoadShed);
+        }
+    }
 
 };
 
@@ -200,8 +257,6 @@ void log_init() {
     nova::log::init();
 }
 
-using AppContext = std::shared_ptr<app::context>;
-
 /**
  * @brief   Read configuration file and initialize DSP runtime with custom logic.
  */
@@ -227,6 +282,7 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
 
     auto app_ctx = std::make_shared<app::context>();
     app_ctx->router = dsp::router{ };
+    app_ctx->topic = cfg->lookup<std::string>("app.topic");
 
     auto sb_builder = service.cfg_southbound();
 

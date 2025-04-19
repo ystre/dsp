@@ -52,13 +52,13 @@ public:
         m_prefix = msg;
     }
 
-    void max_iterations(std::size_t n) {
+    void max_iterations(long n) {
         m_max_iterations = n;
     }
 
 private:
     std::size_t m_iterations = 0;
-    std::size_t m_max_iterations = 0;
+    long m_max_iterations = 0;
 
     std::size_t m_updates = 0;
     std::size_t m_max_message_length = 0;
