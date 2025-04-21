@@ -39,11 +39,10 @@ struct context {
     std::string script;
 };
 
-class handler : public dsp::handler_frame<handler> {
+class handler : public dsp::tcp::handler_frame<handler> {
 public:
-    handler(std::shared_ptr<dsp::cache> cache, const dsp::context& ctx)
-        : m_cache(std::move(cache))
-        , m_ctx(ctx)
+    handler(const dsp::context& ctx)
+        : m_ctx(ctx)
         , m_appctx(std::any_cast<std::shared_ptr<context>>(m_ctx.app))
     {}
 
@@ -53,7 +52,6 @@ public:
     void do_eof() { nova::topic_log::info("handler", "{}", perf_summary()); };
 
 private:
-    std::shared_ptr<dsp::cache> m_cache;
     dsp::context m_ctx;
     std::shared_ptr<context> m_appctx;
 
@@ -61,11 +59,10 @@ private:
 
 };
 
-class passthrough_handler : public dsp::handler_frame<passthrough_handler> {
+class passthrough_handler : public dsp::tcp::handler_frame<passthrough_handler> {
 public:
-    passthrough_handler(std::shared_ptr<dsp::cache> cache, const dsp::context& ctx)
-        : m_cache(std::move(cache))
-        , m_ctx(ctx)
+    passthrough_handler(const dsp::context& ctx)
+        : m_ctx(ctx)
         , m_appctx(std::any_cast<std::shared_ptr<context>>(m_ctx.app))
     {}
 
@@ -74,35 +71,31 @@ public:
     void do_eof() { nova::topic_log::info("handler", "{}", perf_summary()); };
 
 private:
-    std::shared_ptr<dsp::cache> m_cache;
     dsp::context m_ctx;
     std::shared_ptr<context> m_appctx;
 
 };
 
-class factory : public dsp::handler_factory {
+class factory : public dsp::tcp::handler_factory {
 public:
-    factory(std::shared_ptr<dsp::cache> cache, handler_type type)
-        : m_cache(std::move(cache))
-        , m_type(type)
+    factory(handler_type type)
+        : m_type(type)
     {}
 
     auto create() -> std::unique_ptr<dsp::tcp::handler> override {
         switch (m_type) {
-            case handler_type::passthrough:  return std::make_unique<passthrough_handler>(m_cache, m_ctx);
-            case handler_type::telemetry:    return std::make_unique<handler>(m_cache, m_ctx);
+            case handler_type::passthrough:  return std::make_unique<passthrough_handler>(m_ctx);
+            case handler_type::telemetry:    return std::make_unique<handler>(m_ctx);
         }
         nova::unreachable();
     }
 
-    void context(const dsp::context& ctx) override {
-        m_ctx = ctx;
+    void bind(dsp::context ctx) override {
+        m_ctx = std::move(ctx);
     }
 
 private:
-    std::shared_ptr<dsp::cache> m_cache;
     handler_type m_type;
-
     dsp::context m_ctx;
 
 };

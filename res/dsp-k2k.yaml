@@ -1,15 +1,19 @@
 app:
-  topic: dev-test
+  topic: dev-test-2
   handler: telemetry
 
 dsp:
   daemon-interval: 1
   interfaces:
     southbound:
-      type: tcp
-      port: 7200
+      type: kafka
+      address: localhost:9092
+      groupid: dsp-consumer
+      topics: ["dev-test"]
+      batchSize: 10
+      pollTimeoutMs: 100
     northbound:
-      enabled: false
+      enabled: true
       name: main-nb
       type: kafka
       address: localhost:9092

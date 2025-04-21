@@ -9,18 +9,27 @@
 #include <nova/data.hh>
 #include <nova/error.hh>
 
-#include <map>
+#include <any>
 #include <memory>
 #include <string>
 #include <unordered_map>
 
 namespace dsp {
 
+class metrics_registry;
+class cache;
+
+struct context {
+    std::shared_ptr<metrics_registry> stats;
+    std::shared_ptr<class cache> cache;
+    std::any app;
+};
+
 // tag::message[]
 struct message {
     nova::bytes key;
     std::string subject;
-    std::map<std::string, std::string> properties;
+    std::unordered_map<std::string, std::string> properties;
     nova::bytes payload;
 };
 // end::message[]
@@ -29,6 +38,7 @@ class northbound_interface {
 public:
     virtual bool send(const message&) = 0;
     virtual void stop() = 0;
+    virtual void update(metrics_registry&) { /* optional */ }
     virtual ~northbound_interface() = default;
 };
 
@@ -37,7 +47,10 @@ public:
  *          northbound interfaces.
  */
 class cache {
+    using interfaces_a = std::unordered_map<std::string, std::unique_ptr<northbound_interface>>;
+
 public:
+
     void attach_northbound(const std::string& name, std::unique_ptr<northbound_interface> interface) {
         m_interfaces.insert({ name, std::move(interface) });
     }
@@ -80,7 +93,7 @@ public:
     [[nodiscard]] auto get_northbound(const std::string& name) -> Interface* {
         auto it = m_interfaces.find(name);
         if (it == std::end(m_interfaces)) {
-            throw nova::exception(fmt::format("Unknown interface with name: {}", name));
+            throw nova::exception("Unknown interface with name: {}", name);
         }
 
         auto* ptr = dynamic_cast<Interface*>(it->second.get());
@@ -91,8 +104,12 @@ public:
         return ptr;
     }
 
+    [[nodiscard]] auto interfaces() const -> const interfaces_a& {
+        return m_interfaces;
+    }
+
 private:
-    std::unordered_map<std::string, std::unique_ptr<northbound_interface>> m_interfaces;
+    interfaces_a m_interfaces;
 
 };
 

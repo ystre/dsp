@@ -4,14 +4,14 @@
  * A TCP client for performance measuring and functional testing.
  */
 
-#include "stat.hh"
-
 #include <dsp/main.hh>
+#include <dsp/stat.hh>
 #include <dsp/sys.hh>
 #include <dsp/tcp.hh>
 
 #include <nova/data.hh>
 #include <nova/log.hh>
+#include <nova/parse.hh>
 #include <nova/random.hh>
 
 #pragma GCC diagnostic push
@@ -28,9 +28,9 @@
 namespace po = boost::program_options;
 
 struct config {
-    std::size_t count;
-    std::size_t batch_size;
-    std::size_t rate_limit;
+    long count;
+    long batch_size;
+    long rate_limit;
 };
 
 /**
@@ -78,10 +78,10 @@ auto serialize(const message_t& msg) -> nova::bytes {
 /**
  * @brief   Make a copy of `data` `batch_size` times.
  */
-[[nodiscard]] auto batch(nova::bytes data, std::size_t batch_size) -> nova::bytes {
+[[nodiscard]] auto batch(nova::bytes data, long batch_size) -> nova::bytes {
     auto ret = nova::bytes{ };
 
-    for (std::size_t i = 0; i < batch_size; ++i) {
+    for (long i = 0; i < batch_size; ++i) {
         std::ranges::copy(data, std::back_inserter(ret));
     }
 
@@ -98,17 +98,17 @@ auto send(const std::string& address, const nova::bytes& message, const config& 
     client.connect(address);
 
     auto spinner = dsp::spinner{ };
-    spinner.max_iterations(static_cast<std::size_t>(cfg.count));
+    spinner.max_iterations(cfg.count);
     spinner.set_prefix("Messages sent");
 
-    auto stat = statistics{ };
+    auto stat = dsp::statistics{ };
     const auto n = cfg.count / cfg.batch_size;
 
     try {
-        for (std::size_t i = 0; i < n; ++i) {
+        for (long i = 0; i < n; ++i) {
             const auto resp = client.send(nova::data_view{ message });
             stat.observe(message.size(), cfg.batch_size);
-            spinner.set_message(stat.to_string());
+            spinner.set_message(fmt::format("{}", stat));
             spinner.tick();
         }
     } catch (...) {
@@ -126,10 +126,10 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
 
     arg_parser.add_options()
         ("address,t", po::value<std::string>()->required(), "Address of the target")
-        ("count,c", po::value<std::size_t>()->required(), "Number of messages to send")
+        ("count,c", po::value<std::string>()->required(), "Number of messages to send")
         ("size,s", po::value<std::uint16_t>()->required(), "The size of the messages to send (Max size: 65 533")
-        ("batch,b", po::value<std::size_t>()->default_value(1), "Size of the batches")
-        ("rate-limit", po::value<std::size_t>()->default_value(0), "Rate limiting (MPS)")
+        ("batch,b", po::value<long>()->default_value(1), "Size of the batches")
+        ("rate-limit", po::value<long>()->default_value(0), "Rate limiting (MPS)")
         ("help,h", "Show this help message")
     ;
 
@@ -152,9 +152,9 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
 
     const auto size = args["size"].as<std::uint16_t>();
     const auto address = args["address"].as<std::string>();
-    const auto batch_size = args["batch"].as<std::size_t>();
-    const auto count = args["count"].as<std::size_t>();
-    const auto rate_limit = args["rate-limit"].as<std::size_t>();
+    const auto batch_size = args["batch"].as<long>();
+    const auto count = nova::to_number<long>(args["count"].as<std::string>()).value();
+    const auto rate_limit = args["rate-limit"].as<long>();
 
     const auto message = batch(generate_data(size), batch_size);
     send(address, message, config{ count, batch_size, rate_limit });

@@ -4,16 +4,16 @@
  * A Kafka client for performance measuring and functional testing.
  */
 
-#include "stat.hh"
-
 #include <dsp/cache.hh>
 #include <dsp/daemon.hh>
 #include <dsp/kafka.hh>
 #include <dsp/main.hh>
+#include <dsp/stat.hh>
 #include <dsp/sys.hh>
 #include <dsp/tcp.hh>
 
 #include <nova/log.hh>
+#include <nova/parse.hh>
 #include <nova/random.hh>
 
 #pragma GCC diagnostic push
@@ -21,6 +21,7 @@
 #include <boost/program_options.hpp>
 #pragma GCC diagnostic pop
 
+#include <atomic>
 #include <cstddef>
 #include <iostream>
 #include <limits>
@@ -32,8 +33,8 @@ namespace po = boost::program_options;
 using namespace std::literals;
 
 struct metrics {
-    std::size_t n_sent_messages;
-    std::size_t n_drop_messages;
+    std::atomic_int64_t n_sent_messages;
+    std::atomic_int64_t n_drop_messages;
 };
 
 class dr_callback : public dsp::kf::delivery_handler {
@@ -43,11 +44,11 @@ public:
     {}
 
     void handle_error([[maybe_unused]] dsp::kf::message_view message) {
-        ++m_metrics->n_drop_messages;
+        m_metrics->n_drop_messages.fetch_add(1);
     }
 
     void handle_success([[maybe_unused]] dsp::kf::message_view message) {
-        ++m_metrics->n_sent_messages;
+        m_metrics->n_sent_messages.fetch_add(1);
     }
 
 private:
@@ -58,7 +59,7 @@ private:
 auto produce(const po::variables_map& args) {
     const auto broker = args["broker"].as<std::string>();
     const auto topic = args["topic"].as<std::string>();
-    const auto count = args["count"].as<long>();
+    const auto count = nova::to_number<long>(args["count"].as<std::string>()).value();
     const auto size = args["size"].as<std::size_t>();
 
     const auto data = nova::random().string<nova::alphanumeric_distribution>(size);
@@ -79,19 +80,18 @@ auto produce(const po::variables_map& args) {
         .payload = nova::data_view(data).to_vec()
     };
 
-    auto stat = statistics{ };
-    auto timer = nova::stopwatch();
+    auto stat = dsp::statistics{ };
 
-    for (int i = 0; i < count; ++i) {
-        producer.try_send(message);
-        if (stat.observe(message.payload.size())) {     // TODO: full message size, potentially from delivery handler
-            nova::topic_log::info(
-                "kfc",
-                "Messages sent {} (dropped: {}) -- {}",
-                metrics->n_sent_messages,
-                metrics->n_drop_messages,
-                stat.to_string()
-            );
+    long enqueued = 0;
+    while (enqueued < count) {
+        if (producer.try_send(message)) {
+            ++enqueued;
+            if (stat.observe(message.payload.size())) {
+                nova::topic_log::info("kfc", "{} - Dropped: {}", stat, metrics->n_drop_messages.load());
+            }
+        }
+        else {
+            metrics->n_drop_messages.fetch_add(1);
         }
     }
 
@@ -99,18 +99,8 @@ auto produce(const po::variables_map& args) {
         nova::topic_log::warn("kfc", "Flush timed out");
     }
 
-    const auto elapsed = nova::to_sec(timer.elapsed());
-    const auto mbps = static_cast<double>(stat.n_bytes()) / elapsed;
-    const auto mps = static_cast<double>(stat.n_messages()) / elapsed;
-
-    // TODO(refact): Create a function the does formatting for a consistent style.
-    nova::topic_log::info(
-        "kfc",
-        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",
-        mbps / nova::units::constants::MByte,
-        mps / nova::units::constants::kilo,
-        elapsed
-    );
+    nova::topic_log::info("kfc", "{} - Dropped: {}", stat, metrics->n_drop_messages.load());
+    nova::topic_log::info("kfc", "{}", stat.summary());
 }
 
 auto consume([[maybe_unused]] const po::variables_map& args) {
@@ -118,8 +108,15 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
     const auto group_id = args["group-id"].as<std::string>();
     const auto topic = args["topic"].as<std::string>();
     const auto batch_size = args["batch-size"].as<std::size_t>();
-    const auto max_messages = args["count"].as<std::size_t>();
     const auto exit_eof = args["exit-eof"].as<bool>();
+
+    const auto max_messages = [&]() {
+        const auto c = args["count"].as<std::string>();
+        if (c == "max") {
+            return std::numeric_limits<long>::max();
+        }
+        return nova::to_number<long>(c).value();
+    }();
 
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
@@ -127,17 +124,22 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
     cfg.offset_earliest();
     cfg.enable_partition_eof();
 
-    auto stat = statistics{ };
+    auto stat = dsp::statistics{ };
 
     auto consumer = dsp::kf::consumer{ std::move(cfg) };
     consumer.subscribe(topic);
 
     nova::topic_log::info("kfc", "Subscribed to: {}", topic);
 
-    auto timer = nova::stopwatch();
+    bool eof = false;
 
     while (g_sigint == 0 && stat.n_messages() < max_messages) {
         for (const auto& message : consumer.consume(batch_size)) {
+            if (eof) {
+                stat.reset_uptime();
+                eof = false;
+            }
+
             if (message.eof()) {
                 nova::topic_log::debug(
                     "kfc",
@@ -146,21 +148,11 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
                     message.offset()
                 );
 
+                eof = true;
+
                 // TODO(feat): Handle EOF correctly in case of multiple topics.
                 if (exit_eof) {
-                    const auto elapsed = nova::to_sec(timer.elapsed());
-                    const auto mbps = static_cast<double>(stat.n_bytes()) / elapsed;
-                    const auto mps = static_cast<double>(stat.n_messages()) / elapsed;
-
-                    // TODO(refact): Create a function the does formatting for a consistent style.
-                    nova::topic_log::info(
-                        "kfc",
-                        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds",
-                        mbps / nova::units::constants::MByte,
-                        mps / nova::units::constants::kilo,
-                        elapsed
-                    );
-
+                    nova::topic_log::info("kfc", "{}", stat);
                     return;
                 }
                 continue;
@@ -168,15 +160,14 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
 
             nova::topic_log::trace("kfc", "Message consumed: {:lkvh}", message);
 
-            if (stat.observe(message.payload().size())) {     // TODO: full message size
-                nova::topic_log::info(
-                    "kfc",
-                    "Messages consumed {}",
-                    stat.to_string()
-                );
+            if (stat.observe(message.payload().size())) {
+                nova::topic_log::info("kfc", "{}", stat);
             }
         }
     }
+
+    nova::topic_log::info("kfc", "{}", stat);
+    nova::topic_log::info("kfc", "{}", stat.summary());
 }
 
 auto parse_args_produce(const std::vector<std::string>& subargs)
@@ -187,7 +178,7 @@ auto parse_args_produce(const std::vector<std::string>& subargs)
     arg_parser.add_options()
         ("broker,b", po::value<std::string>()->required(), "Address of the Kafka broker")
         ("topic,t", po::value<std::string>()->required(), "Topic name")
-        ("count,c", po::value<long>()->required(), "Number of messages to send")
+        ("count,c", po::value<std::string>()->required(), "Number of messages to send")
         ("size,s", po::value<std::size_t>()->required(), "The size of the messages to send (Max size: 65 533)")
         ("help,h", "Show this help message")
     ;
@@ -215,7 +206,7 @@ auto parse_args_consume(const std::vector<std::string>& subargs)
         ("broker,b", po::value<std::string>()->required(), "Address of the Kafka broker")
         ("topic,t", po::value<std::string>()->required(), "Topic name")
         ("group-id,g", po::value<std::string>()->required(), "Group ID")
-        ("count,c", po::value<std::size_t>()->default_value(std::numeric_limits<std::size_t>::max()),
+        ("count,c", po::value<std::string>()->default_value("max"),
             "Number of messages to consume (note: at least batch size number of messages will be consumed)")
         ("exit-eof,e", po::value<bool>()->default_value(false), "Exit if EOF is reached")
         ("batch-size,B", po::value<std::size_t>()->default_value(1), "Consuming batch sizes")

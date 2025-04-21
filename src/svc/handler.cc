@@ -6,6 +6,8 @@
 
 #include "handler.hh"
 
+#include "dsp/metrics.hh"
+
 #include <nova/data.hh>
 #include <nova/log.hh>
 
@@ -117,9 +119,9 @@ auto handler::do_process(nova::data_view data) -> std::size_t {
 
 [[nodiscard]] auto deserialize(dat::heartbeat data) {
     return fmt::format(
-        "Client ID: {} "
-        "Sequence : {} "
-        "Unix epoch: {}",
+        "client_id={} "
+        "sequence={} "
+        "epoch={}",
         data.client_id(),
         data.sequence(),
         data.timestamp()
@@ -144,7 +146,7 @@ void handler::send(const dsp::message& msg) {
 
     const auto messages = m_appctx->router.route(msg);
     for (const auto& m : messages) {
-        if (m_cache->send(m)) {
+        if (m_ctx.cache->send(m)) {
             m_ctx.stats->increment("process_messages_total", 1, LabelSubject(m.subject));
             m_ctx.stats->increment("process_bytes_total", m.payload.size(), LabelSubject(m.subject));
         } else {
@@ -220,7 +222,7 @@ auto passthrough_handler::do_process(dat::message data) -> std::size_t {
         .payload = data.payload().to_vec()
     };
 
-    if (not m_cache->send(msg)) {
+    if (not m_ctx.cache->send(msg)) {
         m_ctx.stats->increment("drop_messages_total", 1, LabelLoadShed);
         m_ctx.stats->increment("drop_bytes_total", data.length(), LabelLoadShed);
     }

@@ -32,7 +32,6 @@ struct net_config {
 struct server_metrics {
     std::atomic_uint64_t n_connections;
     std::atomic_uint64_t buffer;
-    std::atomic_uint64_t buffer_capacity;
 };
 
 class server {
@@ -48,7 +47,7 @@ public:
 
     void stop();
 
-    void set(std::shared_ptr<handler_factory> factory) {
+    void set(std::shared_ptr<handler_factory_interface> factory) {
         m_factory = std::move(factory);
     }
 
@@ -58,7 +57,7 @@ public:
 private:
     boost::asio::io_context m_io_context;
     boost::asio::ip::tcp::acceptor m_acceptor;
-    std::shared_ptr<handler_factory> m_factory { nullptr };
+    std::shared_ptr<handler_factory_interface> m_factory { nullptr };
     net_config m_config;
 
     std::shared_ptr<server_metrics> m_metrics = std::make_shared<server_metrics>();

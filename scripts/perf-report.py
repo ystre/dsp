@@ -34,11 +34,13 @@ def main():
     kafka_producer_perf_log = os.path.join(artifact_dir, "kafka-producer-perf.txt")
     kafka_consumer_perf_log = os.path.join(artifact_dir, "kafka-consumer-perf.txt")
     dsp_perf_log = os.path.join(artifact_dir, "dsp-perf.txt")
+    dsp_perf_log_k2k = os.path.join(artifact_dir, "dsp-perf-k2k.txt")
 
     extract("tcp", tcp_perf_log)
     extract("kafkaProducer", kafka_producer_perf_log)
     extract("kafkaConsumer", kafka_consumer_perf_log)
     extract("dsp", dsp_perf_log)
+    extract("dsp-k2k", dsp_perf_log_k2k)
 
     print(json.dumps(report, indent=4))
 

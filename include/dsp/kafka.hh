@@ -100,6 +100,14 @@ namespace detail {
             return m_message_ptr->err == RD_KAFKA_RESP_ERR_NO_ERROR;
         }
 
+        [[nodiscard]] auto error_code() const -> int {
+            return m_message_ptr->err;
+        }
+
+        [[nodiscard]] auto error_message() const -> std::string_view {
+            return { rd_kafka_err2str(m_message_ptr->err) };
+        }
+
         [[nodiscard]] auto eof() const -> bool {
             return m_message_ptr->err == RD_KAFKA_RESP_ERR__PARTITION_EOF;
         }
@@ -683,7 +691,7 @@ public:
     }
 
     void stop() {
-        nova::topic_log::info("kafka", "Stopping Kafka...");
+        nova::topic_log::debug("kafka", "Stopping librdkafka producer...");
         m_keep_alive.store(false);
     }
 
@@ -806,6 +814,10 @@ public:
         }
 
         rd_kafka_poll_set_consumer(m_consumer.get());
+
+        m_queue = std::unique_ptr<rd_kafka_queue_t, detail::queue_del>(
+            rd_kafka_queue_get_consumer(m_consumer.get())
+        );
     }
 
     consumer(const consumer&)               = delete;
@@ -814,10 +826,11 @@ public:
     consumer& operator=(consumer&&)         = delete;
 
     ~consumer() {
-        nova::topic_log::info("kafka", "Stopping Kafka...");
+        nova::topic_log::debug("kafka", "Stopping librdkafka consumer...");
         unsubscribe();
 
         rd_kafka_consumer_close(m_consumer.get());
+        nova::topic_log::debug("kafka", "librdkafka consumer has been stopped");
     }
 
     void subscribe(const std::vector<std::string>& topics) {
@@ -833,10 +846,6 @@ public:
         }
 
         rd_kafka_topic_partition_list_destroy(subscription);
-
-        m_queue = std::unique_ptr<rd_kafka_queue_t, detail::queue_del>(
-            rd_kafka_queue_get_consumer(m_consumer.get())
-        );
     }
 
     void subscribe(const std::string& topic) {
@@ -903,7 +912,6 @@ private:
 
 } // namespace dsp::kf
 
-
 template <>
 class fmt::formatter<dsp::kf::message_view_owned> {
 public:
@@ -925,15 +933,9 @@ public:
     constexpr auto parse(format_parse_context& ctx) {
         auto it = ctx.begin();
 
-        // TODO: Why is it enough to check for only `}` and not also for end of range?
-        //       More importantly: why does it not work with checking end of range?
-        //
-        // for (; *it != '}' || it != ctx.end(); ++it) {}              // array subscript value ‘26’ is outside the bounds of array type ‘const char [26]’
-        // for (; it != ctx.end() || *it != '}'; ++it) {}              // ‘constexpr’ loop iteration count exceeds limit of 262144 (use ‘-fconstexpr-loop-limit=’ to increase the limit)
+        for (; it != ctx.end() && *it != '}'; ++it) {}
 
-        for (; *it != '}'; ++it) {}
         m_format_spec = std::string_view{ ctx.begin(), it };
-
         return it;
     }
 
@@ -949,7 +951,7 @@ public:
      */
     template <typename FmtContext>
     constexpr auto format(const dsp::kf::message_view_owned& msg, FmtContext& ctx) const {
-        if (m_format_spec.find('l') != std::string_view::npos) {
+        if (m_format_spec.empty() || m_format_spec.find('l') != std::string_view::npos) {
             fmt::format_to(
                 ctx.out(),
                 "{} [{}] at offset {} ",
@@ -976,32 +978,4 @@ public:
 
 private:
     std::string_view m_format_spec;
-};
-
-// TODO(refact): Move it into Nova.
-template <>
-class fmt::formatter<nova::data_view> {
-public:
-    constexpr auto parse(format_parse_context& ctx) {
-        return ctx.begin();
-    }
-
-    template <typename FmtContext>
-    auto format(nova::data_view data, FmtContext& ctx) const {
-        if (is_printable(data)) {
-            return fmt::format_to(ctx.out(), "{}", data.as_string());
-        }
-        return fmt::format_to(ctx.out(), "x{}", data.as_hex_string());
-    }
-
-private:
-    [[nodiscard]] static auto is_printable(nova::data_view data) -> bool {
-        return not std::ranges::any_of(data, [](auto b) { return not is_printable(b); });
-    }
-
-    [[nodiscard]] static auto is_printable(std::byte b) -> bool {
-        const auto r = nova::ascii::PrintableRange;
-        const auto ch = std::to_integer<char>(b);
-        return r.low <= ch && ch <= r.high;
-    }
 };
