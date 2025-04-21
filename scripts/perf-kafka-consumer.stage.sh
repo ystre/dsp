@@ -26,7 +26,7 @@ function load-data() {
         "${BUILD_DIR,,}/src/tools/kafka-client" produce \
             --broker "${broker}" \
             --topic "${topic_name}" \
-            --count 10000000 \
+            --count 10M \
             --size 200
     else
         msg "Topic already exists (${topic}), skipping loading data."
@@ -47,15 +47,12 @@ function stage-entry() {
         --broker "${broker}" \
         --topic "${topic_name}" \
         --group-id "${group_id}" \
-        --count 20000000 \
+        --count 20M \
         --batch-size 1000 \
         --exit-eof true \
         2>&1 | tee "${LOG_CLIENT}"
 
     msg "Testing has finished"
-
-    msg "Speed test:"
-    grep --color=never --only-matching "Summary:.*" "${LOG_CLIENT}" > "${REPORT_PATH}"
-
+    msg "Speed test: $(grep --color=never --only-matching "Summary:.*" "${LOG_CLIENT}" | tee "${REPORT_PATH}")"
     msg "Report has been saved to: ${REPORT_PATH}"
 }

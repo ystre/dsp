@@ -4,13 +4,14 @@
  * An example service that is used for testing.
  */
 
-#include "dsp/handler.hh"
 #include "handler.hh"
 
 #include <dsp/dsp.hh>
+#include <dsp/handler.hh>
 #include <dsp/http.hh>
 #include <dsp/kafka.hh>
 #include <dsp/router.hh>
+#include <dsp/stat.hh>
 
 #include <nova/error.hh>
 #include <nova/expected.hh>
@@ -142,11 +143,11 @@ public:
             if (message.eof()) {
                 nova::topic_log::debug("app", "End of partition {}[{}] at offset {}", message.topic(), message.partition(), message.offset());
 
-                if (m_metrics.has_value()) {
-                    nova::topic_log::info("app", "{}", perf_summary(*m_metrics));
+                if (m_stats.has_value()) {
+                    nova::topic_log::info("app", "{}", m_stats->summary());
                     nova::topic_log::debug("app", "Stopping application... (SIGINT)");
                     std::raise(SIGINT);
-                    m_metrics = std::nullopt;
+                    m_stats = std::nullopt;
                 }
 
                 return;
@@ -156,8 +157,8 @@ public:
             return;
         }
 
-        if (not m_metrics.has_value()) {
-            m_metrics = dsp::perf_metrics{ };
+        if (not m_stats.has_value()) {
+            m_stats = dsp::statistics();
         }
 
         do_process(message);
@@ -172,7 +173,7 @@ private:
     dsp::context m_ctx;
     AppContext m_appctx;
 
-    std::optional<dsp::perf_metrics> m_metrics {};
+    std::optional<dsp::statistics> m_stats {};
 
     void do_process(dsp::kf::message_view_owned& message) {
         static const auto LabelLoadShed = std::map<std::string, std::string>{ { "drop_type", "load_shed" } };
@@ -188,8 +189,7 @@ private:
 
         m_ctx.stats->increment("process_messages_total", 1);
         m_ctx.stats->increment("process_bytes_total", msg.payload.size());
-        m_metrics->n_messages += 1;
-        m_metrics->n_bytes += msg.payload.size();
+        m_stats->observe(msg.payload.size());
 
         if (not m_ctx.cache->send(msg)) {
             m_ctx.stats->increment("drop_messages_total", 1, LabelLoadShed);

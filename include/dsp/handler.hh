@@ -8,6 +8,7 @@
 
 #include "dsp/cache.hh"
 #include "dsp/kafka.hh"
+#include "dsp/stat.hh"
 #include "dsp/tcp_handler.hh"
 
 #include <nova/log.hh>
@@ -20,32 +21,6 @@
 #include <string>
 
 namespace dsp {
-
-struct perf_metrics {
-    std::size_t n_messages;
-    std::size_t n_bytes;
-    nova::stopwatch uptime;
-};
-
-// FIXME: `nova::stopwatch::elapsed()` should be const.
-[[nodiscard]] inline
-auto perf_summary(perf_metrics& metrics) -> std::string {
-    const auto elapsed = nova::to_sec(metrics.uptime.elapsed());
-    const auto mbps = static_cast<double>(metrics.n_bytes) / elapsed / nova::units::constants::MByte;
-    const auto mps  = static_cast<double>(metrics.n_messages) / elapsed / nova::units::constants::kilo;
-
-    // FIXME: NaNs for very short lived connections.
-    auto summary = fmt::format(
-        "Summary: {:.3f} MBps and {:.0f}k MPS over {:.1f} seconds (total: {} bytes, {} messages)",
-        mbps,
-        mps,
-        elapsed,
-        metrics.n_bytes,
-        metrics.n_messages
-    );
-
-    return summary;
-}
 
 namespace tcp {
 
@@ -76,8 +51,7 @@ public:
             return 0;
         }
 
-        ++m_metrics.n_messages;
-        m_metrics.n_bytes += msg_size;
+        m_stats.observe(msg_size);
 
         return msg_size;
     }
@@ -102,18 +76,16 @@ public:
     }
 
 protected:
-    [[nodiscard]] auto n_bytes()    const { return m_metrics.n_bytes; }
-    [[nodiscard]] auto n_messages() const { return m_metrics.n_messages; }
-
-    // FIXME: const
-    [[nodiscard]] auto uptime() { return m_metrics.uptime.elapsed(); }
+    [[nodiscard]] auto n_bytes()    const { return m_stats.n_bytes(); }
+    [[nodiscard]] auto n_messages() const { return m_stats.n_messages(); }
+    [[nodiscard]] auto uptime()     const { return m_stats.uptime(); }
 
     [[nodiscard]] auto perf_summary() -> std::string {
-        return dsp::perf_summary(m_metrics);
+        return m_stats.summary();
     }
 
 private:
-    perf_metrics m_metrics {};
+    statistics m_stats;
 
 };
 

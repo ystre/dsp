@@ -100,6 +100,7 @@ auto produce(const po::variables_map& args) {
     }
 
     nova::topic_log::info("kfc", "{} - Dropped: {}", stat, metrics->n_drop_messages.load());
+    nova::topic_log::info("kfc", "{}", stat.summary());
 }
 
 auto consume([[maybe_unused]] const po::variables_map& args) {
@@ -166,6 +167,7 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
     }
 
     nova::topic_log::info("kfc", "{}", stat);
+    nova::topic_log::info("kfc", "{}", stat.summary());
 }
 
 auto parse_args_produce(const std::vector<std::string>& subargs)

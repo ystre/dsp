@@ -59,10 +59,29 @@ public:
         return false;
     }
 
+    void reset_uptime() { m_uptime.reset(); }
+
     [[nodiscard]] auto n_messages() const -> long { return m_total_messages; }
     [[nodiscard]] auto n_bytes()    const -> long { return m_total_bytes; }
 
-    void reset_uptime() { m_uptime.reset(); }
+    [[nodiscard]] auto uptime() const -> std::chrono::nanoseconds {
+        return m_uptime.elapsed();
+    }
+
+    [[nodiscard]] auto summary() const -> std::string {
+        const auto elapsed = nova::to_sec(m_uptime.elapsed());
+        const auto mbps = static_cast<double>(m_total_bytes) / elapsed / nova::units::constants::MByte;
+        const auto mps  = static_cast<double>(m_total_messages) / elapsed / nova::units::constants::kilo;
+
+        return fmt::format(
+            "Summary: {:.3f} MBps and {:.2f}k MPS over {:.1f} seconds (total: {} bytes, {} messages)",
+            mbps,
+            mps,
+            elapsed,
+            m_total_bytes,
+            m_total_messages
+        );
+    }
 
 private:
     dsp::system_info m_sys;
