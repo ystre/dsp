@@ -33,14 +33,13 @@ namespace dsp {
 
 class service;
 
-// TODO(naming): ?
 class northbound_builder {
     friend service;
 
 public:
 
     /**
-     * @brief   Build the interface, i.e., finish configuring.
+     * @brief   Instantiate the interface.
      */
     void build();
     auto kafka_props() -> kf::properties&;
@@ -74,7 +73,7 @@ class southbound_builder {
 public:
 
     /**
-     * @brief   Build the interface, i.e., finish configuring.
+     * @brief   Instantiate the interface.
      *
      * This function is responsible for binding DSP context with the interface.
      */

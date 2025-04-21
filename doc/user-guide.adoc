@@ -83,8 +83,6 @@ the framework. Implementations must wrap it together with DSP context, the
 class interface expects `dsp::context` that contains various data, global
 objects that are automatically exposed to client code.
 
-NOTE: TODO: _cache_ is not wrapped in `dsp::context`.
-
 Southbound interfaces use _Handlers_. They define what and how to process.
 
 Handlers are created by factories. For example, each TCP connection creates its
@@ -132,9 +130,8 @@ NOTE: TODO: example code in the library
 
 In DSP Service, the interfaces are configurable via _Builders_ which makes
 possible for the framework to pre-configure interfaces and leave some details
-up to the client code. The `build()` function finalizes the configuration. It
-might be a no-op in case the interface is implemented in a way that makes
-additional configuration possible after the instance is created.
+up to the client code. The `build()` function finalizes the configuration and
+instantiates the interface.
 
 == Supporting Library
 

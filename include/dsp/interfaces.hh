@@ -43,8 +43,10 @@ public:
     /**
      * @brief   Return a listener function.
      *
-     * The function is expected to be a blocking call to be run on a separate
-     * thread.
+     * The function is expected to have an event-loop.
+     *
+     * It is started on a separate thread by DSP framework when the service is
+     * started.
      */
     virtual auto listener() -> std::function<void()> = 0;
 
@@ -113,13 +115,6 @@ public:
 
     /**
      * @brief   Create listener function.
-     *
-     * It is called by DSP framework when the service is started.
-     *
-     * The listener function must contain an event-loop.
-     *
-     * TODO(design): This should be a customization point. Provide a frame similarly
-     *               to `tcp_handler_frame` for convenience.
      */
     auto listener() -> std::function<void()> override {
         return [this]() {
