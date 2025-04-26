@@ -262,6 +262,7 @@ void log_init() {
  */
 auto entrypoint([[maybe_unused]] auto args) -> int {
     log_init();
+    nova::topic_log::info("app", "Starting service");
 
     const auto cfg = nova::getenv("DSP_CONFIG")
         .or_else(fatal)
@@ -314,6 +315,7 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
 
     service.start();
 
+    nova::topic_log::info("app", "Service stopped");
     return EXIT_SUCCESS;
 }
 

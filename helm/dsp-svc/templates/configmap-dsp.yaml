@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dsp-config
+data:
+  dsp.yaml: |
+{{ .Values.config | toYaml | indent 4 }}

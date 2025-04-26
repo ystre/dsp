@@ -52,20 +52,20 @@ private:
     }
 
     static void handle_signal_term(int signal) {
+        if (signal == SIGTERM) {
+            g_sigterm.fetch_add(1);
+        }
+    }
+
+    static void handle_signal_usr1(int signal) {
         if (signal == SIGUSR1) {
             g_sigusr1.fetch_add(1);
         }
     }
 
-    static void handle_signal_usr1(int signal) {
+    static void handle_signal_usr2(int signal) {
         if (signal == SIGUSR2) {
             g_sigusr2.fetch_add(1);
-        }
-    }
-
-    static void handle_signal_usr2(int signal) {
-        if (signal == SIGTERM) {
-            g_sigterm.fetch_add(1);
         }
     }
 };

@@ -16,6 +16,7 @@ G_PROJECT_DIR=$(git -C "${G_SCRIPT_DIR}" rev-parse --show-toplevel)
 G_BUILD_DIR="${G_PROJECT_DIR}/build"
 G_ARTIFACT_DIR="${G_PROJECT_DIR}/.tmp"
 G_REPORT_DIR="${G_ARTIFACT_DIR}/reports"
+G_INSTALL_DIR="${G_ARTIFACT_DIR}/install"
 
 STATUS_CODE=0
 INTERRUPTED=0

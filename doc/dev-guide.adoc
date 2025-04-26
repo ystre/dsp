@@ -50,3 +50,25 @@ docker exec dsp-build \
         --target all \
         --jobs $(($(nproc) / 2))
 ----
+
+An example service is packaged into its own Docker image. This can be used for
+trying out the framework either directly in Docker or it can be deployed into a
+Kubernetes cluster.
+
+See `package` and `deploy` stages.
+
+The Helm version uses its own DSP configuration instead of the one in the `res`
+directory. Log levels are set to "trace" for the highest level of
+observability.
+
+// CMD: run-service-container
+[source,bash]
+----
+docker run --rm \
+    --volume "${PWD}"/res:/opt/ystre/etc \
+    --env DSP_CONFIG=/opt/ystre/etc/dsp.yaml \
+    --env SPDLOG_LEVEL=trace \
+    --publish 7200:7200 \
+    --name svc \
+    local/svc:latest
+----

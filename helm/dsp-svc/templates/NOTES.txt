@@ -1,0 +1,6 @@
+1. Get the application URL by running these commands:
+     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+           You can watch its status by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "dsp-svc.fullname" . }}'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "dsp-svc.fullname" . }} -o jsonpath="{.status.loadBalancer.ingress[0].ip}")
+  export SERVICE_PORT=$(kubectl get svc --namespace dsp svc-dsp-svc -o jsonpath="{.spec.ports[0].nodePort}")
+  nc $SERVICE_IP $SERVICE_PORT

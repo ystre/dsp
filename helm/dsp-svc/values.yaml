@@ -1,0 +1,119 @@
+replicaCount: 1
+
+image:
+  repository: local/svc
+  pullPolicy: Never   # Image is available only locally.
+  tag: latest
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""            # If not set and create is true, a name is generated using the fullname template
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: LoadBalancer
+  port: 7200
+  targetPort: 7200
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 256Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# TODO(feat): OAM interface
+livenessProbe:
+  exec:
+    command:
+      - cat
+      - /tmp/dsp.log
+  # httpGet:
+    # path: /
+    # port: http
+readinessProbe:
+  exec:
+    command:
+      - cat
+      - /tmp/dsp.log
+  # httpGet:
+    # path: /
+    # port: http
+
+# TODO(feat): Auto-scaling.
+# This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+debug: false
+
+config:
+  app:
+    topic: dev-test
+    handler: telemetry
+  dsp:
+    daemon-interval: 1
+    interfaces:
+      southbound:
+        type: tcp
+        port: 7200
+      northbound:
+        enabled: false
+        name: main-nb
+        type: kafka
+        address: localhost:9092
+      metrics:
+        enabled: true
+        port: 9555
+
+env:
+- name: DSP_CONFIG
+  value: /opt/ystre/etc/dsp.yaml
+- name: SPDLOG_LEVEL
+  value: trace
+
+volumes:
+- name: config-volume
+  configMap:
+    name: dsp-config
+- name: tmp
+  emptyDir:
+    sizeLimit: 200Mi
+
+volumeMounts:
+- name: config-volume
+  mountPath: /opt/ystre/etc
+  readOnly: true
+- name: tmp
+  mountPath: /tmp
+  readOnly: false
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
