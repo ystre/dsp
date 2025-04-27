@@ -127,7 +127,7 @@ struct custom_northbound : public dsp::northbound_interface {
 /**
  * @brief   Custom message handler for performance measuring.
  */
-class kafka_message_handler : public dsp::kf::handler_interface {
+class kafka_message_handler : public dsp::kf::handler {
 public:
 
     /**
@@ -290,7 +290,7 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
     if (const auto sb = cfg->lookup<std::string>("dsp.interfaces.southbound.type"); sb == "tcp") {
         sb_builder.tcp_handler<app::factory>(read_handler_cfg(*cfg));
     } else if (sb == "kafka") {
-        std::unique_ptr<dsp::kf::handler_interface> handler = std::make_unique<kafka_message_handler>();
+        std::unique_ptr<dsp::kf::handler> handler = std::make_unique<kafka_message_handler>();
         sb_builder.kafka_handler(std::move(handler));
         sb_builder.kafka_props().offset_earliest();
     } else {

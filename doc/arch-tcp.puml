@@ -1,0 +1,93 @@
+@startuml
+struct tcp.net_config {
+    host: string
+    port: int
+}
+
+struct tcp.server_metrics <<atomic>> {
+    n_connections: int
+    buffer: int
+}
+
+struct tcp.connection_info {
+    address: string
+    port: int
+}
+
+interface tcp.handler {
+    {abstract} process(data_view) : int
+    {abstract} on_connection_init(connection_info)
+    {abstract} on_error(boost::error_code, connection_info)
+    {abstract} on_error(nova::exception, connection_info)
+}
+
+interface tcp.handler_factory {
+    {abstract} create() : handler
+}
+
+interface tcp.handler
+
+class tcp.server {
+    +server(net_config)
+
+    +start()
+    +stop()
+    +set(factory)
+    -accept()
+    .. Observers ..
+    +port() : int
+    +metrics() : server_metrics
+    __ Members __
+    -factory : handler_factory
+    -metrics : server_metrics
+}
+
+class tcp.connection {
+    +connection(socket, handler, metrics)
+    +\~connection()
+
+    +start()
+    +close()
+    +send(data_view)
+
+    -handle_connection()
+    __ Members __
+    -socket
+    -metrics : server_metrics
+    -connection_info
+    -handler
+}
+
+class dsp.handler_frame<Derived> <<Static polymorphism>> extends tcp.handler {
+    +process(data_view) : int
+    +on_connection_init(connection_info)
+    +on_error(boost::error_code, connection_info)
+    +on_error(nova::exception, connection_info)
+    -stats : statistics
+    .. Observers ..
+    #n_bytes() : int
+    #n_messages() : int
+    #uptime() : nanoseconds
+    #perf_summary: string
+    __ External definitions __
+    -{abstract} do_process(data_view) : int
+    -{abstract} do_eof()
+}
+
+tcp.handler_factory "1" --> "many" tcp.handler : creates
+
+server::server -left-> net_config
+handler -left-> connection_info
+
+server o-- handler_factory
+server "1" *--> "1" server_metrics
+connection "1" o--> "1" server_metrics
+
+server "1" *--> "many" connection
+connection "1" o-- "1" handler
+
+@enduml
+
+note right of connection::~connection
+    Decreases number of connections in metrics.
+end note

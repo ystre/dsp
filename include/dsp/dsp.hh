@@ -92,10 +92,10 @@ public:
      * @brief   Create a handler factory and attach it to the service.
      */
     template <typename Factory, typename ...Args>
-        requires requires { std::is_base_of_v<tcp::handler_factory, Factory>; }
+        requires requires { std::is_base_of_v<tcp_handler_factory, Factory>; }
     void tcp_handler(Args&& ...args);
 
-    void kafka_handler(std::unique_ptr<kf::handler_interface> handler);
+    void kafka_handler(std::unique_ptr<kf::handler> handler);
 
 private:
     service* m_service_handle;
@@ -104,8 +104,8 @@ private:
 
     type m_type { type::empty };
 
-    std::unique_ptr<kf::handler_interface> m_kafka_handler { nullptr };
-    std::shared_ptr<tcp::handler_factory> m_tcp_factory { nullptr };
+    std::unique_ptr<kf::handler> m_kafka_handler { nullptr };
+    std::shared_ptr<tcp_handler_factory> m_tcp_factory { nullptr };
 
     template <typename T>
     [[nodiscard]]
@@ -378,13 +378,13 @@ inline void southbound_builder::bind(std::any appctx) {
 }
 
 template <typename Factory, typename ...Args>
-    requires requires { std::is_base_of_v<tcp::handler_factory, Factory>; }
+    requires requires { std::is_base_of_v<tcp_handler_factory, Factory>; }
 void southbound_builder::tcp_handler(Args&& ...args) {
     m_tcp_factory = std::make_shared<Factory>(std::forward<Args>(args)...);
     m_type = type::tcp;
 }
 
-inline void southbound_builder::kafka_handler(std::unique_ptr<kf::handler_interface> handler) {
+inline void southbound_builder::kafka_handler(std::unique_ptr<kf::handler> handler) {
     m_kafka_handler = std::move(handler);
     m_type = type::kafka;
 }

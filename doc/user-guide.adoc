@@ -90,6 +90,14 @@ own handler via the factory.
 
 ==== TCP Server
 
+.Overall architecture
+image::arch-tcp.svg[]
+
+The server instantiates a connection handler when it receives a new TCP
+connection which is then passed to a _connection object_. Server metrics are
+shared with all connections, they are atomic. Each connection has a one
+megabyte buffer serving the handler.
+
 TCP connection handlers must adhere to the following interface.
 
 [source,cpp]
@@ -99,15 +107,17 @@ include::{dsp-headers}/tcp_handler.hh[tag=tcp-handler]
 
 `connection_info` contains information like IP address and port.
 
-It ensures that no exception can escape the TCP server. All uncaught exceptions
-in the handler are sent back for error handling or ignoring.
+No exception can escape the TCP server. All uncaught exceptions in the handler
+are sent back for error handling or explicit ignoring, then the connection is
+closed.
 
 A lightweight frame is provided for TCP handlers - `dsp::handler_frame` -,
 which contains some boilerplate code, like logging and metrics. On connection
-close the TCP server calls into the first overload of `on_error()`.
+close the TCP server calls into `on_error()` with an error code. Exceptions are
+used only for exceptional errors.
 
-This handler frame must be inherited from via CRTP and the following functions
-must be defined and a factory also needs to be defined.
+This handler frame must be inherited from via CRTP. The following functions
+and a factory also needs to be defined.
 
 [source,cpp]
 ----
@@ -117,14 +127,14 @@ public:
     void do_eof();
 };
 
-class factory : public dsp::tcp::handler_factory_interface {
+class factory : public dsp::tcp_handler_factory {
 public:
-    factory(std::shared_ptr<dsp::cache> cache);
+    factory(dsp::context ctx);
     auto create() -> std::unique_ptr<dsp::tcp::handler> override;
 };
 ----
 
-NOTE: TODO: example code in the library
+An example implementation is in `src/svc/handler.{cc,hh}`.
 
 == Configuring Interfaces
 

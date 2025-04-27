@@ -76,7 +76,7 @@ private:
 
 };
 
-class factory : public dsp::tcp::handler_factory {
+class factory : public dsp::tcp_handler_factory {
 public:
     factory(handler_type type)
         : m_type(type)
