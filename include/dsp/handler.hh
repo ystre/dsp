@@ -22,24 +22,19 @@
 
 namespace dsp {
 
-namespace tcp {
-
 /**
  * @brief   TCP handler factory with DSP context.
  */
-class handler_factory : public tcp::handler_factory_interface {
+class tcp_handler_factory : public tcp::handler_factory {
 public:
     virtual void bind(context) { /* optional */ }
-    virtual ~handler_factory() = default;
+    virtual ~tcp_handler_factory() = default;
 };
 
-template <typename Derived>
-class handler_frame : public tcp::handler {
-    struct connection_metrics {
-        std::size_t n_messages;
-        std::size_t n_bytes;
-    };
+namespace tcp {
 
+template <typename Derived>
+class handler_frame : public handler {
 public:
     auto process(nova::data_view data) -> std::size_t override {
         if (data.empty()) {
@@ -56,11 +51,11 @@ public:
         return msg_size;
     }
 
-    void on_connection_init(const tcp::connection_info& info) override {
+    void on_connection_init(const connection_info& info) override {
         nova::topic_log::info("dsp", "Client connected: {}:{}", info.address, info.port);
     }
 
-    void on_error(const boost::system::error_code& ec, const tcp::connection_info& info) override {
+    void on_error(const boost::system::error_code& ec, const connection_info& info) override {
         if (ec == boost::asio::error::eof) {
             nova::topic_log::info("dsp", "Client disconnected: {}:{}", info.address, info.port);
             static_cast<Derived*>(this)->do_eof();
@@ -70,7 +65,7 @@ public:
         }
     }
 
-    void on_error(const nova::exception& ex, const tcp::connection_info& info) override {
+    void on_error(const nova::exception& ex, const connection_info& info) override {
         nova::topic_log::error("dsp", "Unhandled exception in TCP handler: {}", ex.what(), info.address, info.port);
         nova::topic_log::devel("dsp", "Backtrace: \n{}", ex.backtrace());
     }
@@ -93,16 +88,16 @@ private:
 
 namespace kf {
 
-class handler_interface {
+class handler  {
 public:
     virtual void process(kf::message_view_owned& message) = 0;
 
     virtual void bind(context) { /* optional */ }
-    virtual ~handler_interface() = default;
+    virtual ~handler() = default;
 };
 
 template <typename Derived>
-class handler_frame : public kf::handler_interface {
+class handler_frame : public kf::handler  {
 public:
     void process(kf::message_view_owned& message) override {
         if (not message.ok()) {

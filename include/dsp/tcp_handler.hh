@@ -11,10 +11,8 @@
 
 #include <boost/system/detail/error_code.hpp>
 
-#include <any>
 #include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <memory>
 
 namespace dsp::tcp {
@@ -35,10 +33,10 @@ public:
 };
 // end::tcp-handler[]
 
-class handler_factory_interface {
+class handler_factory {
 public:
     virtual auto create() -> std::unique_ptr<handler> = 0;
-    virtual ~handler_factory_interface() = default;
+    virtual ~handler_factory() = default;
 };
 
 } // namespace dsp::tcp

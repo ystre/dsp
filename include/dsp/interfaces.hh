@@ -104,7 +104,7 @@ struct kafka_cfg {
 
 class kafka_listener : public southbound_interface {
 public:
-    kafka_listener(context ctx, kafka_cfg cfg, std::unique_ptr<kf::handler_interface> handler)
+    kafka_listener(context ctx, kafka_cfg cfg, std::unique_ptr<kf::handler> handler)
         : m_kafka_client(std::move(cfg.props))
         , m_handler(std::move(handler))
         , m_batch_size(cfg.batch_size)
@@ -147,7 +147,7 @@ public:
 
 private:
     kf::consumer m_kafka_client;
-    nova::not_null<std::unique_ptr<kf::handler_interface>> m_handler;
+    nova::not_null<std::unique_ptr<kf::handler>> m_handler;
 
     std::atomic_bool m_alive { true };
     std::size_t m_batch_size { 1 };
@@ -162,7 +162,7 @@ private:
 
 class tcp_listener : public southbound_interface {
 public:
-    tcp_listener(context ctx, const tcp::net_config& cfg, std::shared_ptr<tcp::handler_factory> factory)
+    tcp_listener(context ctx, const tcp::net_config& cfg, std::shared_ptr<tcp_handler_factory> factory)
         : m_tcp_server(cfg)
         , m_handler_factory(std::move(factory))
     {
@@ -189,7 +189,7 @@ public:
 
 private:
     tcp::server m_tcp_server;
-    std::shared_ptr<tcp::handler_factory> m_handler_factory;
+    std::shared_ptr<tcp_handler_factory> m_handler_factory;
 
     void bind(context ctx) override {
         m_handler_factory->bind(std::move(ctx));
