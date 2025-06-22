@@ -3,7 +3,7 @@ syntax = "proto3";
 package service_grpc;
 
 service Trans {
-  rpc process(Message) returns (Message) {}
+  rpc process(stream Message) returns (stream Message) {}
 }
 
 message Message {

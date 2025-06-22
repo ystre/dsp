@@ -10,6 +10,7 @@
 #include <dsp/main.hh>
 #include <dsp/tcp.hh>
 
+#include <grpcpp/support/sync_stream.h>
 #include <nova/data.hh>
 #include <nova/log.hh>
 #include <nova/parse.hh>
@@ -58,64 +59,34 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
     return args;
 }
 
-class service : public service_grpc::Trans::Service {
-    auto process(
-        [[maybe_unused]] grpc::ServerContext* ctx,
-        const service_grpc::Message* request,
-        service_grpc::Message* reply
-    ) -> grpc::Status override {
-        reply->set_payload(fmt::format("Size: {}", request->payload().size()));
-        return grpc::Status::OK;
-    }
-
-};
-
-class grpc_server {
-public:
-    grpc_server(const dsp::tcp::net_config& cfg) {
-        m_builder.AddListeningPort(
-            fmt::format("{}:{}", cfg.host, cfg.port),
-            grpc::InsecureServerCredentials()
-        );
-
-        m_builder.RegisterService(&m_service);
-    }
-
-    void start() {
-        auto server = m_builder.BuildAndStart();
-        server->Wait();
-    }
-
-private:
-    service m_service;
-    grpc::ServerBuilder m_builder;
-
-};
-
 class grpc_client {
 public:
     grpc_client(std::shared_ptr<grpc::Channel> channel)
         : m_stub(service_grpc::Trans::NewStub(channel))
-    {}
+    {
+    }
 
     void send(nova::data_view data) {
         auto message = service_grpc::Message{ };
         message.set_payload(data.as_string());
+        m_stream->Write(message);
+    }
 
-        auto reply = service_grpc::Message{ };
-        auto ctx = grpc::ClientContext{ };
-
-        grpc::Status status = m_stub->process(&ctx, message, &reply);
+    void end_stream() {
+        m_stream->WritesDone();
+        auto status = m_stream->Finish();
 
         if (not status.ok()) {
             nova::log::error("gRPC error: {} [{}]", status.error_message(), static_cast<int>(status.error_code()));
         } else {
-            nova::log::trace("Reply: {}", reply.payload());
+            nova::log::debug("Stream success");
         }
     }
 
 private:
     std::unique_ptr<service_grpc::Trans::Stub> m_stub;
+    grpc::ClientContext m_ctx;
+    std::shared_ptr<grpc::ClientReaderWriter<service_grpc::Message, service_grpc::Message>> m_stream = m_stub->process(&m_ctx);
 
 };
 
@@ -141,6 +112,8 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
             nova::log::info("{}", stat);
         }
     }
+
+    client.end_stream();
 
     return EXIT_SUCCESS;
 }

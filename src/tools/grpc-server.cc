@@ -1,13 +1,14 @@
 /**
  * Part of Data Stream Processing tools.
  *
- * A TCP client for performance measuring and functional testing.
+ * A gRPC server.
  */
 
 #include "service.grpc.pb.h"
 
 #include <dsp/main.hh>
 #include <dsp/tcp.hh>
+#include <grpcpp/support/sync_stream.h>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnull-dereference"
@@ -50,10 +51,15 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
 class service : public service_grpc::Trans::Service {
     auto process(
         [[maybe_unused]] grpc::ServerContext* ctx,
-        const service_grpc::Message* request,
-        service_grpc::Message* reply
+        grpc::ServerReaderWriter<service_grpc::Message, service_grpc::Message>* stream
     ) -> grpc::Status override {
-        reply->set_payload(fmt::format("Size: {}", request->payload().size()));
+        auto request = service_grpc::Message{ };
+
+        while (stream->Read(&request)) {
+            auto reply = service_grpc::Message{ };
+            reply.set_payload(fmt::format("Size: {}", request.payload().size()));
+        }
+
         return grpc::Status::OK;
     }
 
