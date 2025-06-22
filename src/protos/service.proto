@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package service_grpc;
+
+service Trans {
+  rpc process(Message) returns (Message) {}
+}
+
+message Message {
+  string payload = 1;
+}

@@ -21,3 +21,6 @@ class Dsp(ConanFile):
         requirements = self.conan_data.get("requirements", [])
         for req in requirements:
             self.requires(req)
+
+    def build_requirements(self):
+        self.tool_requires("protobuf/<host_version>")

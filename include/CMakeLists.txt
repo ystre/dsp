@@ -33,4 +33,5 @@ target_link_libraries(dsp INTERFACE
     RdKafka::rdkafka++
     prometheus-cpp::core
     prometheus-cpp::pull
+    gRPC::grpc++
 )
