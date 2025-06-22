@@ -1,6 +1,6 @@
 from conan import ConanFile
 from conan.tools.files import copy
-from conan.tools.cmake import cmake_layout
+from conan.tools.cmake import CMakeToolchain, CMake, cmake_layout, CMakeDeps
 import os
 
 class Dsp(ConanFile):
@@ -10,6 +10,10 @@ class Dsp(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def generate(self):
+        tc = CMakeToolchain(self)
+        tc.generate()
 
     def configure(self):
         self.options["fmt/*"].header_only = True
@@ -21,3 +25,6 @@ class Dsp(ConanFile):
         requirements = self.conan_data.get("requirements", [])
         for req in requirements:
             self.requires(req)
+
+    def build_requirements(self):
+        self.tool_requires("protobuf/<host_version>")
