@@ -1,3 +1,5 @@
+set(DSP_DEPS_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/../deps")
+
 find_package(Boost REQUIRED)
 find_package(fmt REQUIRED)
 

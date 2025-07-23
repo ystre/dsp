@@ -72,3 +72,15 @@ docker run --rm \
     --name svc \
     local/svc:latest
 ----
+
+== Profiling
+
+Build Tracy Profiler with the following command.
+
+ baldr -p ./deps/tracy/profiler -b Release -t tracy-profiler -DLEGACY=1
+
+`LEGACY` is used for GLFW instead of Wayland. Wayland seems to have some issues.
+
+Use the following command to build the sandbox with profiling enabled.
+
+ baldr -p . -b Debug -t tracy-sandbox -r -DPROFILING=ON -DMALLOC_PROFILING=OFF

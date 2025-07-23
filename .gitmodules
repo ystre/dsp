@@ -1,3 +1,6 @@
 [submodule "deps/nova-cpp"]
 	path = deps/nova-cpp
 	url = https://github.com/GK72/nova-cpp
+[submodule "deps/tracy"]
+	path = deps/tracy
+	url = https://github.com/wolfpld/tracy.git

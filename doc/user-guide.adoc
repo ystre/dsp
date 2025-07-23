@@ -168,6 +168,21 @@ CAUTION: All _tasks_ on worker threads must make sure that upon joining the
 thread, the destructor stops all threads. Stopping tasks is the responsibility
 of the _Service_.
 
+=== Profiling
+
+The framework provides a wrapper around Tracy Profiler Client.
+* A public header: `dsp/profiler.hh`
+* A CMake target / library: `dsp-profiler`
+
+The profiler functionality is enabled if `DSP_PROFILING` is defined.
+
+NOTE: Transitive headers are not public, include directory must be specifically
+set. This is avoiding the assumption that DSP is used as a Git submodule.
+
+Client code must call `start_profiler()` and `stop_profiler()`. Tracy lifetime
+must begin after main, static initialization in other libraries can cause nasty
+things.
+
 == Handlers
 
 All handlers must contain a `dsp::cache`, that is the proxy between southbound
