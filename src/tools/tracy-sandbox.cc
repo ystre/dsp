@@ -54,8 +54,37 @@ int main() {
     nova::log::init();
     dsp::start_profiler();
 
+    // auto a = alloc{ };
+    // for (int i = 0; i < 32; ++i) {
+        // a();
+    // }
+
+    fmt::println("--==[ MALLOC TEST BEGIN ]==--");
+
+    fmt::println("      MALLOC");
+    auto* ptr = std::malloc(4);
+    std::free(ptr);
+
+    fmt::println("      REALLOC");
+    auto* ptr2a = std::malloc(4);
+    auto* ptr2b = std::realloc(ptr2a, 8);
+    auto* ptr2c = std::realloc(ptr2b, 64);
+    std::free(ptr2c);
+
+    fmt::println("      CALLOC");
+    auto* ptr3a = std::calloc(1, 1);
+    auto* ptr3b = std::calloc(1, 4);
+    auto* ptr3c = std::calloc(2, 4);
+
+    std::free(ptr3a);
+    std::free(ptr3b);
+    std::free(ptr3c);
+
+    fmt::println("--==[ MALLOC TEST END ]==--");
+
     auto sh = shell{ };
-    sh.add("do", alloc{ });
+    sh.add("alloc", alloc{ });
+    sh.add("calloc", []{ std::ignore = std::calloc(1, 1); } );
     sh.run();
 
     dsp::stop_profiler();

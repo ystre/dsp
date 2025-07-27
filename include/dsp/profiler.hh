@@ -27,18 +27,12 @@ static_assert(false, "Tracy's lifetime must be managed manually,"
 #define DSP_PROFILING_CALLSTACK_DEPTH 20
 #endif
 
-// https://stackoverflow.com/questions/154136/why-use-apparently-meaningless-do-while-and-if-else-statements-in-macros
-//
-// "The do ... while and if ... else are there to make it so that a semicolon
-// after your macro always means the same thing."
-#define DSP_PROFILING_ZONE(name)                                \
-    do {                                                        \
-        _Pragma("GCC diagnostic push")                          \
-        _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")  \
-        _Pragma("GCC diagnostic ignored \"-Wuseless-cast\"")    \
-        ZoneScopedN(name);                                      \
-        _Pragma("GCC diagnostic pop")                           \
-    } while (0)
+#define DSP_PROFILING_ZONE(name)                            \
+    _Pragma("GCC diagnostic push")                          \
+    _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")  \
+    _Pragma("GCC diagnostic ignored \"-Wuseless-cast\"")    \
+    ZoneScopedN(name);                                      \
+    _Pragma("GCC diagnostic pop")
 
 #endif // DSP_PROFILING
 

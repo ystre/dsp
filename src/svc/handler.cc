@@ -31,7 +31,7 @@ namespace dat {
         message(nova::data_view data) : m_data(data) {}
 
         [[nodiscard]] auto length()  const { return m_data.as_number<std::uint16_t>(0); }
-        [[nodiscard]] auto payload() const { return m_data.subview(LengthPrefixSize, length()); }
+        [[nodiscard]] auto payload() const { return m_data.subview(LengthPrefixSize, length() - LengthPrefixSize); }
 
     private:
         nova::data_view m_data;

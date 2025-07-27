@@ -1,13 +1,184 @@
 #include "dsp/profiler.hh"
 
+#include <functional>
 #include <nova/log.hh>
-
-#include <dlfcn.h>
+#include <fmt/core.h>
 
 #include <cstddef>
 #include <cstdlib>
+#include <string>
+#include <unordered_map>
+#include <map>
+
+#include <dlfcn.h>
+#include <unistd.h>
 
 namespace dsp {
+
+using malloc_sig = void*(*)(size_t);
+using calloc_sig = void*(*)(size_t, size_t);
+using realloc_sig = void*(*)(void*, size_t);
+using free_sig = void(*)(void*);
+
+malloc_sig g_sys_malloc = nullptr;
+calloc_sig g_sys_calloc = nullptr;
+realloc_sig g_sys_realloc = nullptr;
+free_sig g_sys_free = nullptr;
+
+/**
+ * @brief   Return the address of a symbol in a shared object.
+ */
+template <typename F>
+auto load_function(const std::string& name) -> F {
+    static constexpr auto MallocLinkFailure = 66;
+
+    // FIXME: In case of error, dlsym calls into `malloc`.
+    //        https://github.com/bminor/glibc/blob/master/dlfcn/dlerror.c#L162
+    auto* func = reinterpret_cast<F>(dlsym(RTLD_NEXT, name.c_str()));
+    if (func == nullptr) {
+        exit(MallocLinkFailure);
+    }
+    return func;
+}
+
+template <typename T>
+class sys_allocator {
+public:
+    using value_type = T;
+
+    sys_allocator() = default;
+    template <typename U> sys_allocator(const sys_allocator<U>&) {}
+    template <typename U> struct rebind { using other = sys_allocator<U>; };
+
+    auto allocate(std::size_t n) -> T* {
+        if (g_sys_malloc == nullptr) {
+            g_sys_malloc = load_function<malloc_sig>("malloc");
+        }
+
+        return static_cast<T*>(g_sys_malloc(n * sizeof(T)));
+    }
+
+    void deallocate(T* ptr, [[maybe_unused]] std::size_t n) {
+        if (g_sys_free == nullptr) {
+            g_sys_free = load_function<free_sig>("free");
+        }
+
+        g_sys_free(ptr);
+    }
+
+};
+
+thread_local bool t_allocation_lock { false };
+thread_local bool t_deallocation_lock { false };
+
+
+struct allocation_tracker {
+    allocation_tracker() : is_alive{ true } {}
+    ~allocation_tracker() { is_alive = false; }
+
+    std::unordered_map<
+        void*, bool,
+        std::hash<void*>,
+        std::equal_to<void*>,
+        sys_allocator<std::pair<void* const, bool>>
+    > inner;
+
+    bool is_alive;
+};
+
+thread_local allocation_tracker t_tracked_allocations;
+
+/**
+ * @brief   Custom allocator primarily built for profiling.
+ */
+class aly {
+public:
+    auto allocate(std::size_t n) -> void* {
+        if (g_sys_malloc == nullptr) {
+            g_sys_malloc = load_function<malloc_sig>("malloc");
+        }
+
+        void* ptr = g_sys_malloc(n);
+        profile_allocation(ptr, n);
+        return ptr;
+    }
+
+    auto allocate_array(std::size_t n, std::size_t size) -> void* {
+        if (g_sys_calloc == nullptr) {
+            g_sys_calloc = load_function<calloc_sig>("calloc");
+        }
+
+        void* ptr = g_sys_calloc(n, size);
+
+        // CAUTION: Due to the alignment requirements, the number of allocated bytes is not necessarily equal to num * size.
+        // https://en.cppreference.com/w/c/memory/calloc.html
+        profile_allocation(ptr, n * size);
+
+        return ptr;
+    }
+
+    auto reallocate(void* ptr, std::size_t n) -> void* {
+        if (g_sys_realloc == nullptr) {
+            g_sys_realloc = load_function<realloc_sig>("realloc");
+        }
+
+        void* new_ptr = g_sys_realloc(ptr, n);
+        if (ptr != new_ptr) {
+            profile_deallocation(ptr);
+            profile_allocation(new_ptr, n);
+        }
+        return new_ptr;
+    }
+
+    void deallocate(void* ptr) {
+        if (g_sys_free == nullptr) {
+            g_sys_free = load_function<free_sig>("free");
+        }
+
+        profile_deallocation(ptr);
+        g_sys_free(ptr);
+    }
+
+private:
+    void profile_allocation(void* ptr, std::size_t n) {
+        if (t_allocation_lock) {
+            return;
+        }
+
+        t_allocation_lock = true;
+        #ifdef DSP_PROFILING_TRACE_LOGS
+        fmt::println("Allocation: {} (size={}) [@{}]", ptr, n, gettid());
+        #endif
+        TracySecureAllocS(ptr, n, DSP_PROFILING_CALLSTACK_DEPTH);
+        t_tracked_allocations.inner.insert({ptr, true});
+
+        t_allocation_lock = false;
+    }
+
+    void profile_deallocation(void* ptr) {
+        if (t_deallocation_lock || not t_tracked_allocations.is_alive) {
+            return;
+        }
+
+        t_deallocation_lock = true;
+        const auto it = t_tracked_allocations.inner.find(ptr);
+        if (it == std::end(t_tracked_allocations.inner)) {
+            t_deallocation_lock = false;
+            return;
+        }
+
+        t_tracked_allocations.inner.erase(it);
+        t_allocation_lock = true;
+        #ifdef DSP_PROFILING_TRACE_LOGS
+        fmt::println("Deallocation: {} [@{}]", ptr, gettid());
+        #endif
+        TracySecureFreeS(ptr, DSP_PROFILING_CALLSTACK_DEPTH);
+        t_allocation_lock = false;
+
+        t_deallocation_lock = false;
+    }
+
+};
 
 void start_profiler() {
     tracy::StartupProfiler();
@@ -45,70 +216,23 @@ void operator delete(void* ptr, [[maybe_unused]] std::size_t n) noexcept {
 #else
 
 constexpr auto AllocDlFailure = 66;
-constexpr auto CallocUnsupported = 67;
-constexpr auto ReallocUnsupported = 68;
+
+static dsp::aly alloc;
 
 extern "C" void* malloc(size_t n) {
-    using malloc_sig = void*(*)(size_t);
-    static malloc_sig sys_malloc = nullptr;
-
-    if (sys_malloc == nullptr) {
-        // FIXME: In case of error, dlsym calls into `malloc`.
-        //        https://github.com/bminor/glibc/blob/master/dlfcn/dlerror.c#L162
-        sys_malloc = reinterpret_cast<malloc_sig>(dlsym(RTLD_NEXT, "malloc"));
-        if (sys_malloc == nullptr) {
-            exit(AllocDlFailure);
-        }
-    }
-
-    void* ptr = sys_malloc(n);
-    TracySecureAlloc(ptr, n);           // TODO(feat): Use callstacks.
-    return sys_malloc(n);
+    return alloc.allocate(n);
 }
 
 extern "C" void* calloc(size_t n, size_t size) {
-    exit(CallocUnsupported);        // TODO: Figure out what to do with `calloc` and Tracy.
-    using calloc_sig = void*(*)(size_t, size_t);
-    static calloc_sig sys_calloc = nullptr;
-
-    if (sys_calloc == nullptr) {
-        sys_calloc = reinterpret_cast<calloc_sig>(dlsym(RTLD_NEXT, "calloc"));
-        if (sys_calloc == nullptr) {
-            exit(AllocDlFailure);
-        }
-    }
-
-    return sys_calloc(n, size);
+    return alloc.allocate_array(n, size);
 }
 
-extern "C" void* realloc(void* ptr, size_t new_size) {
-    exit(ReallocUnsupported);       // TODO: Figure out what to do with `realloc` and Tracy.
-    using realloc_sig = void*(*)(void*, size_t);
-    static realloc_sig sys_realloc = nullptr;
-
-    if (sys_realloc == nullptr) {
-        sys_realloc = reinterpret_cast<realloc_sig>(dlsym(RTLD_NEXT, "realloc"));
-        if (sys_realloc == nullptr) {
-            exit(AllocDlFailure);
-        }
-    }
-
-    return sys_realloc(ptr, new_size);
+extern "C" void* realloc(void* ptr, size_t n) {
+    return alloc.reallocate(ptr, n);
 }
 
 extern "C" void free(void* ptr) {
-    using free_sig = void(*)(void*);
-    static free_sig sys_free = nullptr;
-
-    if (sys_free == nullptr) {
-        sys_free = reinterpret_cast<free_sig>(dlsym(RTLD_NEXT, "free"));
-        if (sys_free == nullptr) {
-            exit(AllocDlFailure);
-        }
-    }
-
-    TracySecureFree(ptr);               // TODO(feat): Use callstacks.
-    sys_free(ptr);
+    alloc.deallocate(ptr);
 }
 
 #endif // DSP_MALLOC_PROFILING

@@ -1,3 +1,4 @@
+#include <memory>
 #include <vector>
 
 /**
@@ -8,5 +9,5 @@ public:
     void operator()();
 
 private:
-    std::vector<int> m_xs;
+    std::vector<std::shared_ptr<int>> m_xs;
 };

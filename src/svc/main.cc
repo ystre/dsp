@@ -10,6 +10,7 @@
 #include <dsp/handler.hh>
 #include <dsp/http.hh>
 #include <dsp/kafka.hh>
+#include <dsp/profiler.hh>
 #include <dsp/router.hh>
 #include <dsp/stat.hh>
 
@@ -263,6 +264,7 @@ void log_init() {
 auto entrypoint([[maybe_unused]] auto args) -> int {
     log_init();
     nova::topic_log::info("app", "Starting service");
+    dsp::start_profiler();
 
     const auto cfg = nova::getenv("DSP_CONFIG")
         .or_else(fatal)
@@ -316,6 +318,7 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
     service.start();
 
     nova::topic_log::info("app", "Service stopped");
+    dsp::stop_profiler();
     return EXIT_SUCCESS;
 }
 

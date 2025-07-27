@@ -10,7 +10,8 @@ option(BUILD_TESTS "Build tests" ON)
 option(RUNTIME_ASSERTIONS "Enable asserts in release build" OFF)
 option(NOVA_EXPERIMENTAL_FEATURE_SET "Experimental Nova" OFF)
 option(LTO "Link Time Optimization" FALSE)
-option(PROFILING "Enable Tracy Profiler" OFF)
+option(PROFILING "Enable profiling" OFF)
+option(PROFILING_TRACE_LOGS "Enable trace logs, else Tracy Profiler" OFF)
 option(MALLOC_PROFILING "Enable profiling malloc and their friends" OFF)
 
 if(RUNTIME_ASSERTIONS)
@@ -31,6 +32,10 @@ if(PROFILING)
 
     if(MALLOC_PROFILING)
         add_compile_definitions(DSP_MALLOC_PROFILING)
+    endif()
+
+    if(PROFILING_TRACE_LOGS)
+        add_compile_definitions(DSP_PROFILING_TRACE_LOGS)
     endif()
 
     add_subdirectory(deps/tracy)
