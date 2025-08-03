@@ -83,4 +83,8 @@ Build Tracy Profiler with the following command.
 
 Use the following command to build the sandbox with profiling enabled.
 
- baldr -p . -b Debug -t tracy-sandbox -r -DPROFILING=ON -DMALLOC_PROFILING=OFF
+ baldr -p . -b Debug -t tracy-sandbox -r -DPROFILING=ON -DMALLOC_PROFILING=ON
+
+Disable callstacks for improving the performance a bit.
+
+ baldr -p . -b Debug -t tracy-sandbox -r -DPROFILING=ON -DMALLOC_PROFILING=ON -DPROFILING_CALLSTACK_DEPTH=0

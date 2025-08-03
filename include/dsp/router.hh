@@ -6,7 +6,8 @@
 
 #pragma once
 
-#include "dsp/cache.hh"
+#include <dsp/cache.hh>
+#include <dsp/profiler.hh>
 
 #include <string>
 #include <utility>
@@ -67,6 +68,7 @@ public:
     }
 
     [[nodiscard]] auto route(const dsp::message& msg) -> std::vector<dsp::message> {
+        DSP_PROFILING_ZONE("route");
         auto ret = std::vector<dsp::message>{ };
 
         for (const auto& rule : m_rules) {

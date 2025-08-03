@@ -1,14 +1,15 @@
 #include "dsp/profiler.hh"
 
-#include <functional>
 #include <nova/log.hh>
 #include <fmt/core.h>
 
 #include <cstddef>
 #include <cstdlib>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <map>
+#include <mutex>
 
 #include <dlfcn.h>
 #include <unistd.h>
@@ -71,7 +72,6 @@ public:
 thread_local bool t_allocation_lock { false };
 thread_local bool t_deallocation_lock { false };
 
-
 struct allocation_tracker {
     allocation_tracker() : is_alive{ true } {}
     ~allocation_tracker() { is_alive = false; }
@@ -83,10 +83,10 @@ struct allocation_tracker {
         sys_allocator<std::pair<void* const, bool>>
     > inner;
 
-    bool is_alive;
+    bool is_alive = false;
 };
 
-thread_local allocation_tracker t_tracked_allocations;
+allocation_tracker g_tracked_allocations;
 
 /**
  * @brief   Custom allocator primarily built for profiling.
@@ -140,8 +140,10 @@ public:
     }
 
 private:
+    std::mutex m_tracker_lock;
+
     void profile_allocation(void* ptr, std::size_t n) {
-        if (t_allocation_lock) {
+        if (t_allocation_lock || not g_tracked_allocations.is_alive) {
             return;
         }
 
@@ -150,24 +152,30 @@ private:
         fmt::println("Allocation: {} (size={}) [@{}]", ptr, n, gettid());
         #endif
         TracySecureAllocS(ptr, n, DSP_PROFILING_CALLSTACK_DEPTH);
-        t_tracked_allocations.inner.insert({ptr, true});
+        auto lock = std::lock_guard(m_tracker_lock);
+        g_tracked_allocations.inner.insert({ptr, true});
 
         t_allocation_lock = false;
     }
 
     void profile_deallocation(void* ptr) {
-        if (t_deallocation_lock || not t_tracked_allocations.is_alive) {
+        if (t_deallocation_lock || not g_tracked_allocations.is_alive) {
             return;
         }
 
         t_deallocation_lock = true;
-        const auto it = t_tracked_allocations.inner.find(ptr);
-        if (it == std::end(t_tracked_allocations.inner)) {
-            t_deallocation_lock = false;
-            return;
+
+        {
+            auto lock = std::lock_guard(m_tracker_lock);
+            const auto it = g_tracked_allocations.inner.find(ptr);
+            if (it == std::end(g_tracked_allocations.inner)) {
+                t_deallocation_lock = false;
+                return;
+            }
+
+            g_tracked_allocations.inner.erase(it);
         }
 
-        t_tracked_allocations.inner.erase(it);
         t_allocation_lock = true;
         #ifdef DSP_PROFILING_TRACE_LOGS
         fmt::println("Deallocation: {} [@{}]", ptr, gettid());
@@ -214,8 +222,6 @@ void operator delete(void* ptr, [[maybe_unused]] std::size_t n) noexcept {
 }
 
 #else
-
-constexpr auto AllocDlFailure = 66;
 
 static dsp::aly alloc;
 

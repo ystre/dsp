@@ -22,12 +22,17 @@ include(cmake/compiler-warnings.cmake)
 include(cmake/dependencies.cmake)
 include(cmake/settings.cmake)
 
+if(NOT PROFILING_CALLSTACK_DEPTH)
+    set(PROFILING_CALLSTACK_DEPTH 20)
+endif()
+
 if(PROFILING)
     add_compile_definitions(
         TRACY_ENABLE
         TRACY_DELAYED_INIT
         TRACY_MANUAL_LIFETIME
         DSP_PROFILING
+        DSP_PROFILING_CALLSTACK_DEPTH=${PROFILING_CALLSTACK_DEPTH}
     )
 
     if(MALLOC_PROFILING)

@@ -33,7 +33,8 @@ static_assert(false, "Tracy's lifetime must be managed manually,"
     _Pragma("GCC diagnostic ignored \"-Wuseless-cast\"")    \
     ZoneScopedN(name);                                      \
     _Pragma("GCC diagnostic pop")
-
+#else
+#define DSP_PROFILING_ZONE(...)
 #endif // DSP_PROFILING
 
 namespace dsp {

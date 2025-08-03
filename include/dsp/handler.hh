@@ -8,6 +8,7 @@
 
 #include "dsp/cache.hh"
 #include "dsp/kafka.hh"
+#include "dsp/profiler.hh"
 #include "dsp/stat.hh"
 #include "dsp/tcp_handler.hh"
 
@@ -37,6 +38,7 @@ template <typename Derived>
 class handler_frame : public handler {
 public:
     auto process(nova::data_view data) -> std::size_t override {
+        DSP_PROFILING_ZONE("tcp-handler");
         if (data.empty()) {
             return 0;
         }
@@ -100,6 +102,7 @@ template <typename Derived>
 class handler_frame : public kf::handler  {
 public:
     void process(kf::message_view_owned& message) override {
+        DSP_PROFILING_ZONE("kafka-handler");
         if (not message.ok()) {
             if (message.eof()) {
                 nova::topic_log::debug(

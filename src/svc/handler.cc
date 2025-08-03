@@ -7,6 +7,7 @@
 #include "handler.hh"
 
 #include "dsp/metrics.hh"
+#include "dsp/profiler.hh"
 
 #include <nova/data.hh>
 #include <nova/log.hh>
@@ -94,16 +95,17 @@ namespace dat {
 } // namespace dat
 
 auto handler::do_process(nova::data_view data) -> std::size_t {
+    DSP_PROFILING_ZONE("process");
     if (data.size() < dat::telemetry::MinimumLength) { return 0; }
 
-    const auto msg = dat::telemetry{ data };
+    const auto msg = dat::message{ data };
     if (data.size() < msg.length()) { return 0; }
 
     // TODO(feat): Register metrics beforehand to ensure proper naming.
     m_ctx.stats->increment("receive_messages_total", 1);
     m_ctx.stats->increment("receive_bytes_total", msg.length());
 
-    switch (msg.type()) {
+    switch (dat::telemetry{ data }.type()) {
         case dat::telemetry::type::heartbeat:
             do_process(dat::heartbeat{ data });
             break;
@@ -138,6 +140,7 @@ auto handler::do_process(nova::data_view data) -> std::size_t {
  * - dropped messages and bytes (labels: drop_type[load_shed,not_needed])
  */
 void handler::send(const dsp::message& msg) {
+    DSP_PROFILING_ZONE("send");
     static const auto LabelLoadShed  = std::map<std::string, std::string>{ { "drop_type", "load_shed" } };
     static const auto LabelNotNeeded = std::map<std::string, std::string>{ { "drop_type", "not_needed" } };
     static const auto LabelSubject = [](const std::string& subject) -> std::map<std::string, std::string> {
@@ -147,6 +150,7 @@ void handler::send(const dsp::message& msg) {
     const auto messages = m_appctx->router.route(msg);
     for (const auto& m : messages) {
         if (m_ctx.cache->send(m)) {
+            // FIXME(perf): Metrics functions receive `std::string`. Avoid unnecessary allocations in hot loop.
             m_ctx.stats->increment("process_messages_total", 1, LabelSubject(m.subject));
             m_ctx.stats->increment("process_bytes_total", m.payload.size(), LabelSubject(m.subject));
         } else {
@@ -175,6 +179,7 @@ void handler::do_process(dat::heartbeat data) {
 }
 
 void handler::do_process(dat::dyn_message data) {
+    DSP_PROFILING_ZONE("process-msg");
     const auto msg = dsp::message {
         .key = { },
         .subject = { },

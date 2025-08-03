@@ -1,14 +1,3 @@
-add_library(dsp-tcp tcp.cc)
-target_link_libraries(dsp-tcp PUBLIC
-    dsp-headers
-    nova
-
-    Boost::headers
-    spdlog::spdlog_header_only
-)
-
-code_analysis(dsp-tcp PRIVATE)
-
 if(PROFILING)
     add_library(dsp-profiler profiler.cc)
 
@@ -20,6 +9,20 @@ if(PROFILING)
         Tracy::TracyClient
     )
 
-    target_include_directories(dsp-profiler PRIVATE "${DSP_DEPS_INCLUDE_DIR}")
+    target_include_directories(dsp-profiler PUBLIC "${DSP_DEPS_INCLUDE_DIR}")
     code_analysis(dsp-profiler PRIVATE)
+else()
+    add_library(dsp-profiler INTERFACE)
 endif()
+
+add_library(dsp-tcp tcp.cc)
+target_link_libraries(dsp-tcp PUBLIC
+    dsp-headers
+    dsp-profiler
+    nova
+
+    Boost::headers
+    spdlog::spdlog_header_only
+)
+
+code_analysis(dsp-tcp PRIVATE)
