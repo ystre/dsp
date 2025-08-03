@@ -11,6 +11,7 @@
 #pragma once
 
 #include <dsp/cache.hh>
+#include <dsp/profiler.hh>
 
 #include <nova/error.hh>
 #include <nova/expected.hh>
@@ -559,6 +560,7 @@ class producer {
         std::atomic_bool& keep_alive;
 
         void operator()() {
+            DSP_PROFILING_ZONE("kafka-poll");
             while (keep_alive.load()) {
                 rd_kafka_poll(producer, static_cast<int>(detail::PollTimeout.count()));
             }
@@ -728,6 +730,7 @@ private:
     }
 
     auto send_impl(const dsp::message& msg) -> rd_kafka_resp_err_t {
+        DSP_PROFILING_ZONE("kafka-produce");
         rd_kafka_resp_err_t err;
 
         if (not msg.properties.empty()) {
@@ -886,6 +889,7 @@ public:
     auto consume(std::size_t batch_size, std::chrono::milliseconds timeout = detail::PollTimeout)
             -> std::vector<message_view_owned>
     {
+        DSP_PROFILING_ZONE("kafka-consume");
         std::vector<rd_kafka_message_t*> messages(batch_size);
 
         auto n = rd_kafka_consume_batch_queue(m_queue.get(), static_cast<int>(timeout.count()), messages.data(), batch_size);

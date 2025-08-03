@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <dsp/profiler.hh>
+
 #include <nova/data.hh>
 #include <nova/error.hh>
 
@@ -61,6 +63,7 @@ public:
      * @returns with false if any interface failed to process the message.
      */
     auto send(const message& msg) -> bool {
+        DSP_PROFILING_ZONE("cache");
         auto success = true;
 
         for (const auto& [_, x] : m_interfaces) {

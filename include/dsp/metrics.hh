@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <dsp/profiler.hh>
 #include <nova/type_traits.hh>
 
 #include <prometheus/counter.h>
@@ -28,16 +29,22 @@ class metrics_registry {
     using gauge_t = prometheus::Family<prometheus::Gauge>;
 
 public:
-    auto increment(const std::string& name, nova::arithmetic auto value, const prometheus::Labels labels = {}) {
+    auto increment(const std::string& name, nova::arithmetic auto value, const prometheus::Labels& labels = {}) {
+        DSP_PROFILING_ZONE("metrics");
         // TODO(safety): thread-safety
         auto& family = add_counter(name);
+
+        // TODO(perf): Add labels only once (do not call it if no labels).
         auto& x = family.Add(labels);
         x.Increment(static_cast<double>(value));
     }
 
-    auto set(const std::string& name, nova::arithmetic auto value, const prometheus::Labels labels = {}) {
+    auto set(const std::string& name, nova::arithmetic auto value, const prometheus::Labels& labels = {}) {
+        DSP_PROFILING_ZONE("metrics");
         // TODO(safety): thread-safety
         auto& family = add_gauge(name);
+
+        // TODO(perf): Add labels only once (do not call it if no labels).
         auto& x = family.Add(labels);
         x.Set(static_cast<double>(value));
     }

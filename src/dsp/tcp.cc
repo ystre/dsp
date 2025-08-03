@@ -5,6 +5,7 @@
  */
 
 #include "dsp/tcp.hh"
+#include <dsp/profiler.hh>
 
 #include <nova/data.hh>         // TODO(refact): only an alias definition is needed from the header
 #include <nova/error.hh>
@@ -99,9 +100,11 @@ private:
      * is closed after that.
      */
     auto handle_connection() -> asio::awaitable<void> {
+        DSP_PROFILING_ZONE("tcp");
         auto buf = asio::streambuf{};
 
         while (true) {
+            // FIXME(perf): Buffer size can overshoot the 1MB making a 2MB vector.
             auto buffer = buf.prepare(BufferSize.count());
 
             boost::system::error_code ec;

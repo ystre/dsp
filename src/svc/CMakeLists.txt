@@ -3,7 +3,8 @@ add_executable(svc
     handler.cc
 )
 
-target_link_libraries(svc PRIVATE dsp)
+target_link_libraries(svc PRIVATE dsp dsp-profiler)
+target_include_directories(svc PRIVATE "${DSP_DEPS_INCLUDE_DIR}")
 code_analysis(svc PRIVATE)
 
 add_executable(sim sim.cc)
