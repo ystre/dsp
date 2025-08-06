@@ -13,12 +13,9 @@ AsciiDoc book: `doc/dsp.adoc`.
 ├── cmake
 ├── deps                    Dependencies (Git submodules)
 ├── doc
-├── include                 Public headers
+├── libdsp                  Data Stream Processing framework
 ├── res                     Resources (configurations)
-├── unit-tests
 ├── scripts                 Various scripts, e.g., for testing
-├── src
-│   ├── dsp                 Data Stream Processing framework
-│   ├── svc                 An example service
-│   └── tools               Individual executables (like Kafka client)
+├── svc                     An example service
+└── tools                   Individual executables (like Kafka client)
 ```

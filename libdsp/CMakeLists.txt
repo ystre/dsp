@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
+set(ROOT_DIR "${CMAKE_HOME_DIRECTORY}/..")
+
 include(cmake/version.cmake)
 dsp_extract_version()
 
@@ -18,9 +20,10 @@ if(RUNTIME_ASSERTIONS)
     add_compile_definitions(NOVA_RUNTIME_ASSERTIONS)
 endif()
 
-include(cmake/compiler-warnings.cmake)
-include(cmake/dependencies.cmake)
-include(cmake/settings.cmake)
+include("${ROOT_DIR}/cmake/compiler-warnings.cmake")
+include("${ROOT_DIR}/cmake/dependencies.cmake")
+include("${ROOT_DIR}/cmake/settings.cmake")
+# include("${ROOT_DIR}/cmake/profiling.cmake")
 
 if(NOT PROFILING_CALLSTACK_DEPTH)
     set(PROFILING_CALLSTACK_DEPTH 20)
@@ -43,12 +46,26 @@ if(PROFILING)
         add_compile_definitions(DSP_PROFILING_TRACE_LOGS)
     endif()
 
-    add_subdirectory(deps/tracy)
+    add_subdirectory("${ROOT_DIR}/deps/tracy" tracy)
 endif()
 
-add_subdirectory(deps/nova-cpp/include)
+add_subdirectory("${ROOT_DIR}/deps/nova-cpp/include" nova)
 
 include(GNUInstallDirs)
+
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 add_subdirectory(libdsp)
-add_subdirectory(svc)
-add_subdirectory(tools)
+
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/config.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/DspConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/dsp"
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/DspConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/DspConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/dsp"
+)
