@@ -628,8 +628,9 @@ public:
      * - Delivery reports.
      * - Callbacks.
      */
-    [[nodiscard]] auto queue_size() const -> int {
-        return rd_kafka_outq_len(m_producer.get());
+    [[nodiscard]] auto queue_size() const -> std::size_t {
+        // TODO: Safe cast.
+        return static_cast<std::size_t>(rd_kafka_outq_len(m_producer.get()));
     }
 
     /**
@@ -834,6 +835,13 @@ public:
 
         rd_kafka_consumer_close(m_consumer.get());
         nova::topic_log::debug("kafka", "librdkafka consumer has been stopped");
+    }
+
+    /**
+     * @brief   Return the current number of elements in queue.
+     */
+    [[nodiscard]] auto queue_size() const -> std::size_t {
+        return rd_kafka_queue_length(m_queue.get());
     }
 
     void subscribe(const std::vector<std::string>& topics) {
