@@ -19,5 +19,6 @@ Automated testing can be run with `./scripts/run.sh all`.
 include::user-guide.adoc[leveloffset=+1]
 include::env.adoc[leveloffset=+1]
 include::test.adoc[leveloffset=+1]
+include::perf.adoc[leveloffset=+1]
 include::dev-guide.adoc[leveloffset=+1]
 include::cmd.adoc[leveloffset=+1]

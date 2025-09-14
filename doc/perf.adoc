@@ -1,0 +1,109 @@
+= Performance Report
+
+These are module-level performance results, everything running on a single
+machine. Notably, there is only one instance of Kafka broker running in a 
+Docker container. The benchmarked codes are run as native Unix processes.
+
+Hardware:
+
+----
+Architecture:             x86_64
+  CPU op-mode(s):         32-bit, 64-bit
+  Address sizes:          39 bits physical, 48 bits virtual
+  Byte Order:             Little Endian
+CPU(s):                   8
+Vendor ID:                GenuineIntel
+  Model name:             11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
+    CPU family:           6
+    Model:                140
+    Thread(s) per core:   2
+    Core(s) per socket:   4
+    Socket(s):            1
+    Stepping:             1
+    CPU max MHz:          4700.0000
+    CPU min MHz:          400.0000
+Caches (sum of all):
+  L1d:                    192 KiB (4 instances)
+  L1i:                    128 KiB (4 instances)
+  L2:                     5 MiB (4 instances)
+  L3:                     12 MiB (1 instance)
+----
+
+== TCP Server
+
+Command: `./scripts/run.sh perf-tcp`
+
+Input data: 20 million 200-byte messages.
+
+Results as measured by the code. `handler_frame` class provides a
+`perf_summary()` function that reports a summary when the connection is closed
+(in case of EOF).
+
+ Summary: 432.332 MBps and 2222k MPS over 9.0 seconds (total: 4080000000 bytes, 20000000 messages)
+
+== Kafka Producer
+
+One thread is always fully utilized as the test client is using the non-blocking
+message sending, therefore it produces messages as fast as it can and drops them
+if the producer queue is full. The second thread is the _poll thread_.
+
+Notable Kafka client default configuration:
+
+* queue.buffering.max.messages: 100k
+* queue.buffering.max.kbytes: 1GB
+* linger.ms: 5
+* acks: all
+
+At full-throttle, the default 100k queue is completely filled.
+
+Example commands:
+
+[source,bash]
+----
+./scripts/run.sh deps
+ 
+docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --topic dev-test \
+  --create \
+  --partitions 1 \
+  --config retention.ms=600000
+
+kafka-client produce -b localhost:9092 -t dev-test -c 10M -s 200
+----
+
+[cols="5,3,1,1,1"]
+|===
+| Scenario | Throughput | RSS | CPU | Duration
+| Single partition (default config) | 171.981 MBps (901.67k MPS) | 62.4 MB | 200% | 11.1s
+| Single partition (1 MB queue) | 152.010 MBps (796.97k MPS) | 14.5 MB | 170% | 62.7s
+| 50 partitions (default config) | 162.679 MBps (852.86k MPS) | 66.7 MB | 200% | 58.6s
+|===
+
+== Kafka Consumer
+
+[source,bash]
+----
+kafka-client consume -b localhost:9092 -t dev-test -X auto.offset.reset=beginning -g 1
+----
+
+Notable Kafka client default configuration:
+
+* queued.max.messages.kbytes: 65MB
+
+Queue utilization is around 4 000 messages.
+
+[cols="5,3,1,1,1"]
+|===
+| Scenario | Throughput | RSS | CPU | Duration
+| Basline (idle) | N/A | 9.0 MB | 0.0% | N/A
+| 5 partitions (default config) | 470.064 MBps (2464.49k MPS) | 20-30 MB | 175% | 20s
+| 50 partitions (default config) | 37.816 MBps (198.26k MPS) | 66.5 MB | 16% | 61.3s
+|===
+
+Memory utilization (based on what Tracy sees):
+
+|===
+| Scenario | # allocations | Memory
+| Idle | 633 | 698.09 KB
+|===

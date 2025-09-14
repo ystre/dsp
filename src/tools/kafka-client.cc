@@ -8,6 +8,7 @@
 #include <dsp/daemon.hh>
 #include <dsp/kafka.hh>
 #include <dsp/main.hh>
+#include <dsp/profiler.hh>
 #include <dsp/stat.hh>
 #include <dsp/sys.hh>
 #include <dsp/tcp.hh>
@@ -56,6 +57,20 @@ private:
 
 };
 
+[[nodiscard]] inline auto split_key_values(const std::vector<std::string>& xs) {
+    auto ret = std::vector<std::pair<std::string, std::string>>{ };
+
+    for (const auto& x : xs) {
+        const auto kv = nova::split(x, "=");
+        if (kv.size() != 2) {
+            throw nova::exception("The result of key-value splitting must be exactly 2 elements");
+        }
+        ret.emplace_back(kv[0], kv[1]);
+    }
+
+    return ret;
+}
+
 auto produce(const po::variables_map& args) {
     const auto broker = args["broker"].as<std::string>();
     const auto topic = args["topic"].as<std::string>();
@@ -70,6 +85,12 @@ auto produce(const po::variables_map& args) {
     auto cfg = dsp::kf::properties{};
     cfg.bootstrap_server(broker);
     cfg.delivery_callback(std::make_unique<dr_callback>(metrics));
+
+    if (args.contains("kafka-config")) {
+        for (const auto& [key, value] : split_key_values(args["kafka-config"].as<std::vector<std::string>>())) {
+            cfg.set(key, value);
+        }
+    }
 
     auto producer = dsp::kf::producer{ std::move(cfg) };
 
@@ -87,7 +108,7 @@ auto produce(const po::variables_map& args) {
         if (producer.try_send(message)) {
             ++enqueued;
             if (stat.observe(message.payload.size())) {
-                nova::topic_log::info("kfc", "{} - Dropped: {}", stat, metrics->n_drop_messages.load());
+                nova::topic_log::info("kfc", "{} - Dropped: {} - Queue: {}", stat, metrics->n_drop_messages.load(), producer.queue_size());
             }
         }
         else {
@@ -126,6 +147,12 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
 
     auto stat = dsp::statistics{ };
 
+    if (args.contains("kafka-config")) {
+        for (const auto& [key, value] : split_key_values(args["kafka-config"].as<std::vector<std::string>>())) {
+            cfg.set(key, value);
+        }
+    }
+
     auto consumer = dsp::kf::consumer{ std::move(cfg) };
     consumer.subscribe(topic);
 
@@ -159,9 +186,8 @@ auto consume([[maybe_unused]] const po::variables_map& args) {
             }
 
             nova::topic_log::trace("kfc", "Message consumed: {:lkvh}", message);
-
             if (stat.observe(message.payload().size())) {
-                nova::topic_log::info("kfc", "{}", stat);
+                nova::topic_log::info("kfc", "{} - Queue: {}", stat, consumer.queue_size());
             }
         }
     }
@@ -180,6 +206,7 @@ auto parse_args_produce(const std::vector<std::string>& subargs)
         ("topic,t", po::value<std::string>()->required(), "Topic name")
         ("count,c", po::value<std::string>()->required(), "Number of messages to send")
         ("size,s", po::value<std::size_t>()->required(), "The size of the messages to send (Max size: 65 533)")
+        ("kafka-config,X", po::value<std::vector<std::string>>()->multitoken(), "Kafka configuration")
         ("help,h", "Show this help message")
     ;
 
@@ -210,6 +237,7 @@ auto parse_args_consume(const std::vector<std::string>& subargs)
             "Number of messages to consume (note: at least batch size number of messages will be consumed)")
         ("exit-eof,e", po::value<bool>()->default_value(false), "Exit if EOF is reached")
         ("batch-size,B", po::value<std::size_t>()->default_value(1), "Consuming batch sizes")
+        ("kafka-config,X", po::value<std::vector<std::string>>()->multitoken(), "Kafka configuration")
         ("help,h", "Show this help message")
     ;
 
@@ -269,6 +297,8 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
 auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     nova::log::init("kfc");
 
+    dsp::start_profiler();
+
     [[maybe_unused]] auto sig = dsp::signal_handler{ };
     const auto client = args["command"].as<std::string>();
 
@@ -277,6 +307,8 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     } else if (client == "consume") {
         consume(args);
     }
+
+    dsp::stop_profiler();
 
     return EXIT_SUCCESS;
 }
