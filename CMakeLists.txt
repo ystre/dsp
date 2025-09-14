@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-include(cmake/version.cmake)
-dsp_extract_version()
-
-project("dsp" VERSION ${DSP_VERSION} LANGUAGES CXX)
-message(STATUS "DSP version ${DSP_VERSION}")
+project("dsp-super" LANGUAGES CXX)
 
 option(BUILD_TESTS "Build tests" ON)
 option(RUNTIME_ASSERTIONS "Enable asserts in release build" OFF)
@@ -18,9 +14,11 @@ if(RUNTIME_ASSERTIONS)
     add_compile_definitions(NOVA_RUNTIME_ASSERTIONS)
 endif()
 
-include(cmake/compiler-warnings.cmake)
+find_package(nova REQUIRED)
+include(novaCompilerWarnings)
+include(novaCompilerSettings)
+
 include(cmake/dependencies.cmake)
-include(cmake/settings.cmake)
 
 if(NOT PROFILING_CALLSTACK_DEPTH)
     set(PROFILING_CALLSTACK_DEPTH 20)
@@ -46,11 +44,6 @@ if(PROFILING)
     add_subdirectory(deps/tracy)
 endif()
 
-add_subdirectory(deps/nova-cpp/include)
-add_subdirectory(include)
-add_subdirectory(src)
-
-if(BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(unit-tests)
-endif()
+add_subdirectory(libdsp)
+add_subdirectory(svc)
+add_subdirectory(dsp-tools)

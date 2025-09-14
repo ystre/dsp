@@ -1,5 +1,6 @@
 requirements:
 - gtest/1.14.0    # TODO: hide; it is required for development only
+- benchmark/1.8.3
 
 - boost/1.86.0
 - fmt/10.2.1

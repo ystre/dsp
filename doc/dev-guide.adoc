@@ -1,7 +1,20 @@
 = Developer`s Guide
 
+== Local Workflow
+
+[source,bash]
+----
+export CMAKE_BUILD_PARALLEL_LEVEL=4
+./scripts/install-nova.sh
+./scripts/run.sh build
+----
+
+== Docker Workflow
+
 Build a Docker image (install Docker Buildx plugin). It contains all the
 necessary build tools for building DSP.
+
+// TODO(env): Docker environment is outdated.
 
 // CMD: devenv
 [source,bash]

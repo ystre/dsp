@@ -10,15 +10,12 @@ AsciiDoc book: `doc/dsp.adoc`.
 ## Project structure
 
 ```
+├── dsp-tools           Individual executables (like Kafka client)
 ├── cmake
-├── deps                    Dependencies (Git submodules)
+├── deps                Dependencies (Git submodules)
 ├── doc
-├── include                 Public headers
-├── res                     Resources (configurations)
-├── unit-tests
-├── scripts                 Various scripts, e.g., for testing
-├── src
-│   ├── dsp                 Data Stream Processing framework
-│   ├── svc                 An example service
-│   └── tools               Individual executables (like Kafka client)
+├── libdsp              Data Stream Processing framework
+├── res                 Resources (configurations)
+├── scripts             Various scripts, e.g., for testing
+└── svc                 An example service
 ```
