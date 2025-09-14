@@ -8,6 +8,7 @@
 #include <dsp/daemon.hh>
 #include <dsp/kafka.hh>
 #include <dsp/main.hh>
+#include <dsp/profiler.hh>
 #include <dsp/stat.hh>
 #include <dsp/sys.hh>
 #include <dsp/tcp.hh>
@@ -296,6 +297,8 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
 auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     nova::log::init("kfc");
 
+    dsp::start_profiler();
+
     [[maybe_unused]] auto sig = dsp::signal_handler{ };
     const auto client = args["command"].as<std::string>();
 
@@ -304,6 +307,8 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     } else if (client == "consume") {
         consume(args);
     }
+
+    dsp::stop_profiler();
 
     return EXIT_SUCCESS;
 }

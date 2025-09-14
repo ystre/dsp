@@ -100,3 +100,10 @@ Queue utilization is around 4 000 messages.
 | 5 partitions (default config) | 470.064 MBps (2464.49k MPS) | 20-30 MB | 175% | 20s
 | 50 partitions (default config) | 37.816 MBps (198.26k MPS) | 66.5 MB | 16% | 61.3s
 |===
+
+Memory utilization (based on what Tracy sees):
+
+|===
+| Scenario | # allocations | Memory
+| Idle | 633 | 698.09 KB
+|===

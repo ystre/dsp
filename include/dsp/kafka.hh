@@ -629,8 +629,10 @@ public:
      * - Callbacks.
      */
     [[nodiscard]] auto queue_size() const -> std::size_t {
-        // TODO: Safe cast.
-        return static_cast<std::size_t>(rd_kafka_outq_len(m_producer.get()));
+        auto ret = rd_kafka_outq_len(m_producer.get());
+        nova_assert(ret >= 0);
+        // TODO(nova): Safe cast.
+        return static_cast<std::size_t>(ret);
     }
 
     /**
