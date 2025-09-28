@@ -102,28 +102,15 @@ auto send(const std::string& address, const nova::bytes& message, const config& 
     auto client = dsp::tcp::client{ };
     client.connect(address);
 
-    auto spinner = dsp::spinner{ };
-    spinner.max_iterations(cfg.count);
-    spinner.set_prefix("Messages sent");
-
     auto stat = dsp::statistics{ };
     const auto n = cfg.count / cfg.batch_size;
 
-    try {
-        for (long i = 0; i < n; ++i) {
-            const auto resp = client.send(nova::data_view{ message });
-            stat.observe(message.size(), cfg.batch_size);
-            spinner.set_message(fmt::format("{}", stat));
-            spinner.tick();
+    for (long i = 0; i < n; ++i) {
+        const auto resp = client.send(nova::data_view{ message });
+        if (stat.observe(message.size(), cfg.batch_size)) {
+            nova::topic_log::info("tcp-client", "{}", stat);
         }
-    } catch (...) {
-        spinner.set_prefix("Aborted");
-        spinner.finish();
-        throw;
     }
-
-    spinner.set_prefix("Finished");
-    spinner.finish();
 }
 
 auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options::variables_map> {

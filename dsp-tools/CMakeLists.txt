@@ -6,6 +6,8 @@ endfunction()
 
 add_tool(tcp-client)
 add_tool(kafka-client)
+add_tool(ws-server)
+add_tool(ws-client)
 
 # FIXME: Protoc version mismatch due to distro managed Protobuf version.
 # add_subdirectory(protos)
