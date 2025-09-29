@@ -52,6 +52,8 @@ target_link_libraries(dsp INTERFACE
     RdKafka::rdkafka++
     prometheus-cpp::core
     prometheus-cpp::pull
+
+    OpenSSL::Crypto
 )
 
 code_analysis(dsp INTERFACE)
@@ -62,9 +64,10 @@ if(BUILD_TESTING)
     find_package(GTest REQUIRED)
     include(GoogleTest)
 
+    add_test_target(crypto)
     add_test_target(router)
 
     find_package(benchmark REQUIRED)
 
-    # add_bench_target(serializer)
+    add_bench_target(crypto)
 endif()
