@@ -12,8 +12,12 @@ target_include_directories(dsp-headers INTERFACE
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 
-add_library(dsp-tcp tcp.cpp)
-target_link_libraries(dsp-tcp PUBLIC
+add_library(dsp-impl
+    tcp.cpp
+    websocket.cpp
+)
+
+target_link_libraries(dsp-impl PUBLIC
     dsp-headers
     dsp-profiler
     nova::nova
@@ -22,7 +26,7 @@ target_link_libraries(dsp-tcp PUBLIC
     spdlog::spdlog_header_only
 )
 
-code_analysis(dsp-tcp PRIVATE)
+code_analysis(dsp-impl PRIVATE)
 
 if(PROFILING)
     add_library(dsp-profiler profiler.cpp)
@@ -44,8 +48,8 @@ endif()
 add_library(dsp INTERFACE)
 target_link_libraries(dsp INTERFACE
     dsp-headers
-    dsp-tcp
     dsp-profiler
+    dsp-impl
 
     nova::nova
 

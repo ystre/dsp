@@ -291,6 +291,8 @@ auto entrypoint([[maybe_unused]] auto args) -> int {
 
     if (const auto sb = cfg->lookup<std::string>("dsp.interfaces.southbound.type"); sb == "tcp") {
         sb_builder.tcp_handler<app::factory>(read_handler_cfg(*cfg));
+    } else if (sb == "websocket") {
+        sb_builder.websocket_handler<app::factory>(read_handler_cfg(*cfg));
     } else if (sb == "kafka") {
         std::unique_ptr<dsp::kf::handler> handler = std::make_unique<kafka_message_handler>();
         sb_builder.kafka_handler(std::move(handler));

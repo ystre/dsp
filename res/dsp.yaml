@@ -6,7 +6,7 @@ dsp:
   daemon-interval: 1
   interfaces:
     southbound:
-      type: tcp
+      type: websocket
       port: 7200
     northbound:
       enabled: false

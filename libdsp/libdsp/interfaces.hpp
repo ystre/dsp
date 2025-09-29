@@ -14,6 +14,7 @@
 #include <libdsp/kafka.hpp>
 #include <libdsp/metrics.hpp>
 #include <libdsp/tcp.hpp>
+#include <libdsp/websocket.hpp>
 
 #include <libnova/log.hpp>
 #include <libnova/not_null.hpp>
@@ -189,6 +190,44 @@ public:
 
 private:
     tcp::server m_tcp_server;
+    std::shared_ptr<tcp_handler_factory> m_handler_factory;
+
+    void bind(context ctx) override {
+        m_handler_factory->bind(std::move(ctx));
+    }
+
+};
+
+class websocket_listener : public southbound_interface {
+public:
+    websocket_listener(context ctx, const tcp::net_config& cfg, std::shared_ptr<tcp_handler_factory> factory)
+        : m_websocket_server(cfg)
+        , m_handler_factory(std::move(factory))
+    {
+        bind(std::move(ctx));
+        m_websocket_server.set(m_handler_factory);
+    }
+
+    auto listener() -> std::function<void()> override {
+        return [this]() {
+            nova::topic_log::info("dsp", "Starting WebSocket server on port {}", m_websocket_server.port());
+            m_websocket_server.start();
+        };
+    }
+
+    void stop() override {
+        m_websocket_server.stop();
+    }
+
+    void update([[maybe_unused]] metrics_registry& metrics) override {
+        // TODO(feat): Implement.
+        // const auto& m = m_websocket_server.metrics();
+        // metrics.set("connection_count", m.n_connections.load());
+        // metrics.set("tcp_buffer_size", m.buffer.load());
+    }
+
+private:
+    ws::server m_websocket_server;
     std::shared_ptr<tcp_handler_factory> m_handler_factory;
 
     void bind(context ctx) override {

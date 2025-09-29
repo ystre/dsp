@@ -6,12 +6,19 @@
  * Note: This is an initial, draft implementation.
  */
 
+// TODO: Fix this "Werror" properly.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
 #include <libdsp/main.hpp>
+#pragma GCC diagnostic pop
+
 #include <libdsp/tcp.hpp>
 #include <libdsp/stat.hpp>
 
+#include <libnova/data.hpp>
 #include <libnova/random.hpp>
 #include <libnova/parse.hpp>
+#include <libnova/units.hpp>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnull-dereference"
@@ -33,7 +40,8 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
     arg_parser.add_options()
         ("port,p", po::value<dsp::tcp::port_type>()->required(), "The port to listen on")
         ("count,c", po::value<std::string>()->required(), "Number of messages to send")
-        ("size,s", po::value<std::size_t>()->required(), "The size of the messages to send (Max size: 65 533)")
+        ("batch,b", po::value<std::string>()->required(), "Number of messages to batch together")
+        ("size,s", po::value<std::uint16_t>()->required(), "The size of the messages to send (Max size: 65 533")
         ("help,h", "Show this help message")
     ;
 
@@ -50,15 +58,63 @@ auto parse_args(int argc, char* argv[]) -> std::optional<boost::program_options:
     return args;
 }
 
+// TODO(refact): Copy pasta'd from tcp-client.
+
+/**
+ * @brief   An example message holding randomly generated data.
+ */
+struct message_t {
+    std::uint16_t prefix;
+    std::uint16_t type;
+    std::string payload;
+};
+
+/**
+ * @brief   Serializer for `message_t`.
+ */
+auto serialize(const message_t& msg) -> nova::bytes {
+    auto ser = nova::serializer_context(msg.prefix);
+    ser(msg.prefix);
+    ser(msg.type);
+    ser(msg.payload);
+
+    return ser.data();
+}
+
+/**
+ * @brief   Generate random data with or without length prefix.
+ */
+[[nodiscard]] auto generate_data(std::uint16_t size) -> nova::bytes {
+    const auto data = nova::random().string<nova::alphanumeric_distribution>(size);
+
+    static constexpr std::uint16_t PrefixSize = 4;
+    static constexpr std::uint16_t DynamicMessageType = 1;
+    const auto length_prefix = size + PrefixSize;
+    nova::log::debug("Length prefix: {}", length_prefix);
+
+    return serialize(
+        message_t{
+            .prefix = static_cast<std::uint16_t>(length_prefix),
+            .type = DynamicMessageType,
+            .payload = data
+        }
+    );
+}
+
+
 namespace ws {
 
 class client : public std::enable_shared_from_this<client> {
+    static constexpr nova::units::bytes BufferSize { nova::units::MBytes{ 1 } };
+
 public:
     client(boost::asio::any_io_executor exec)
         : m_resolver(exec)
         , m_websocket(exec)
     {
         m_websocket.binary(true);
+        // m_websocket.auto_fragment(false);
+        // m_websocket.write_buffer_bytes(BufferSize.count());
     }
 
     /**
@@ -71,6 +127,7 @@ public:
     {
         auto results = co_await m_resolver.async_resolve(host, fmt::format("{}", port), boost::asio::use_awaitable);
         co_await boost::asio::async_connect(m_websocket.next_layer(), results, boost::asio::use_awaitable);
+        // m_websocket.next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
         co_await m_websocket.async_handshake(host, target, boost::asio::use_awaitable);
 
         nova::topic_log::info("wsc", "Connected to {}:{}", host, port);
@@ -91,8 +148,9 @@ private:
 
     auto reader() -> boost::asio::awaitable<void> {
         try {
+            boost::beast::flat_buffer buffer;
             while (true) {
-                boost::beast::flat_buffer buffer;
+                buffer.consume(buffer.size());
                 co_await m_websocket.async_read(buffer, boost::asio::use_awaitable);
                 nova::topic_log::trace("wsc", "Received: {}", nova::data_view{ buffer.data().data(), buffer.data().size() });
             }
@@ -109,10 +167,13 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
     nova::log::init("wsc");
 
     const auto port = args["port"].as<dsp::tcp::port_type>();
-    const auto size = args["size"].as<std::size_t>();
+    const auto size = args["size"].as<std::uint16_t>();
     const auto count = nova::to_number<long>(args["count"].as<std::string>()).value();
+    const auto batch_size = nova::to_number<int>(args["batch"].as<std::string>()).value();
 
-    const auto data = nova::random().string<nova::alphanumeric_distribution>(size);
+    static constexpr auto BatchBufferSize = nova::units::kBytes{ 64 };
+
+    const auto data = generate_data(size);
     nova::topic_log::debug("wsc", "Generated payload with size {}: {}", size, data);
 
     boost::asio::io_context ioc;
@@ -121,20 +182,29 @@ auto entrypoint([[maybe_unused]] const po::variables_map& args) -> int {
 
     boost::asio::co_spawn(
         ioc,
-        [client, port, data, count]() -> boost::asio::awaitable<void> {
+        [client, port, data, count, batch_size]() -> boost::asio::awaitable<void> {
             co_await client->connect("localhost", port);
 
             auto stat = dsp::statistics{ };
             long sent = 0;
 
+            auto buffer = nova::stream_buffer<>{ nova::units::bytes{ BatchBufferSize }.count() };
+
             while (sent < count) {
-                nova::topic_log::trace("wsc", "Sending {}", data);
-                co_await client->send(data);
-                if (stat.observe(data.size())) {
-                    nova::topic_log::info("wsc", "{}", stat);
+                std::size_t sent_bytes = 0;
+                for (int i = 0; i < batch_size; ++i) {
+                    sent_bytes += buffer.write(data);
+                    ++sent;
                 }
 
-                ++sent;
+                nova::topic_log::trace("wsc", "Sending {}", data);
+
+                co_await client->send(buffer.view());
+                buffer.consume();
+
+                if (stat.observe(sent_bytes, batch_size)) {
+                    nova::topic_log::info("wsc", "{}", stat);
+                }
             }
 
             nova::topic_log::info("wsc", "Finished");

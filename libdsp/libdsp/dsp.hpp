@@ -67,6 +67,7 @@ class southbound_builder {
     enum class type {
         empty,
         tcp,
+        websocket,
         kafka
     };
 
@@ -95,6 +96,10 @@ public:
         requires requires { std::is_base_of_v<tcp_handler_factory, Factory>; }
     void tcp_handler(Args&& ...args);
 
+    template <typename Factory, typename ...Args>
+        requires requires { std::is_base_of_v<tcp_handler_factory, Factory>; }
+    void websocket_handler(Args&& ...args);
+
     void kafka_handler(std::unique_ptr<kf::handler> handler);
 
 private:
@@ -106,6 +111,7 @@ private:
 
     std::unique_ptr<kf::handler> m_kafka_handler { nullptr };
     std::shared_ptr<tcp_handler_factory> m_tcp_factory { nullptr };
+    // std::shared_ptr<websocket_handler_factory> m_websocket_factory { nullptr };
 
     template <typename T>
     [[nodiscard]]
@@ -119,6 +125,7 @@ private:
 
     void build_kafka();
     void build_tcp();
+    void build_websocket();
 
 };
 
@@ -197,7 +204,7 @@ public:
         auto builder = southbound_builder{ };
         builder.m_service_handle = this;
 
-        if (const auto sbi_type = lookup<std::string>("interfaces.southbound.type"); sbi_type == "tcp") {
+        if (const auto sbi_type = lookup<std::string>("interfaces.southbound.type"); sbi_type == "tcp" || sbi_type == "websocket") {
             const auto port = lookup<tcp::port_type>("interfaces.southbound.port");
             builder.m_cfg = std::make_any<tcp::net_config>("0.0.0.0", port);
         } else if (sbi_type == "kafka") {
@@ -337,9 +344,10 @@ inline void southbound_builder::build() {
     }
 
     switch (m_type) {
-        case type::empty:   throw nova::exception("Southbound handler is not set");
-        case type::tcp:     build_tcp();    break;
-        case type::kafka:   build_kafka();  break;
+        case type::empty:       throw nova::exception("Southbound handler is not set");
+        case type::tcp:         build_tcp();            break;
+        case type::kafka:       build_kafka();          break;
+        case type::websocket:   build_websocket();      break;
     }
 }
 
@@ -373,6 +381,22 @@ inline void southbound_builder::build_tcp() {
     sb = std::move(listener);
 }
 
+inline void southbound_builder::build_websocket() {
+    auto& sb = m_service_handle->m_southbound;
+
+    auto listener = std::make_unique<websocket_listener>(
+        context{
+            .stats = m_service_handle->m_metrics,
+            .cache = m_service_handle->m_cache,
+            .app = std::move(m_appctx)
+        },
+        cast<tcp::net_config>(m_cfg),
+        m_tcp_factory
+    );
+
+    sb = std::move(listener);
+}
+
 inline void southbound_builder::bind(std::any appctx) {
     m_appctx = std::move(appctx);
 }
@@ -382,6 +406,13 @@ template <typename Factory, typename ...Args>
 void southbound_builder::tcp_handler(Args&& ...args) {
     m_tcp_factory = std::make_shared<Factory>(std::forward<Args>(args)...);
     m_type = type::tcp;
+}
+
+template <typename Factory, typename ...Args>
+    requires requires { std::is_base_of_v<tcp_handler_factory, Factory>; }
+void southbound_builder::websocket_handler(Args&& ...args) {
+    m_tcp_factory = std::make_shared<Factory>(std::forward<Args>(args)...);
+    m_type = type::websocket;
 }
 
 inline void southbound_builder::kafka_handler(std::unique_ptr<kf::handler> handler) {
