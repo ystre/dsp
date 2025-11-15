@@ -11,6 +11,7 @@
 #include <libdsp/kafka.hpp>
 #include <libdsp/metrics.hpp>
 #include <libdsp/tcp.hpp>
+#include <libdsp/trace.hpp>
 
 #include <libnova/log.hpp>
 #include <libnova/yaml.hpp>
@@ -134,6 +135,7 @@ public:
         : m_config(config)
     {
         init_metrics();
+        init_trace();
     }
 
     void start() {
@@ -268,6 +270,7 @@ private:
     std::unique_ptr<southbound_interface> m_southbound = nullptr;
     std::unique_ptr<pm_exposer> m_exposer = nullptr;
     std::shared_ptr<metrics_registry> m_metrics = nullptr;
+    std::shared_ptr<tracer> m_tracer = nullptr;
 
     /**
      * @brief   Create metrics registry and Prometheus Exposer.
@@ -281,6 +284,18 @@ private:
 
         const auto port = lookup<tcp::port_type>("interfaces.metrics.port");
         m_exposer = std::make_unique<pm_exposer>(std::to_string(port), m_metrics);
+    }
+
+    /**
+     * @brief   ph
+     */
+    void init_trace() {
+        if (not lookup<bool>("interfaces.trace.enabled")) {
+            return;
+        }
+
+        const auto port = lookup<std::string>("interfaces.trace.address");
+        m_tracer = std::make_shared<tracer>(port);
     }
 
     /**
@@ -349,6 +364,7 @@ inline void southbound_builder::build_kafka() {
     sb = std::make_unique<kafka_listener>(
         context{
             .stats = m_service_handle->m_metrics,
+            .trace = m_service_handle->m_tracer,
             .cache = m_service_handle->m_cache,
             .app = std::move(m_appctx)
         },
@@ -363,6 +379,7 @@ inline void southbound_builder::build_tcp() {
     auto listener = std::make_unique<tcp_listener>(
         context{
             .stats = m_service_handle->m_metrics,
+            .trace = m_service_handle->m_tracer,
             .cache = m_service_handle->m_cache,
             .app = std::move(m_appctx)
         },

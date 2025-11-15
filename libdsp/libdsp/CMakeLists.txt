@@ -18,6 +18,7 @@ target_link_libraries(dsp-tcp PUBLIC
     dsp-profiler
     nova::nova
 
+    opentelemetry-cpp::opentelemetry-cpp
     Boost::headers
     spdlog::spdlog_header_only
 )

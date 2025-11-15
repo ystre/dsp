@@ -19,10 +19,12 @@
 namespace dsp {
 
 class metrics_registry;
+class tracer;
 class cache;
 
 struct context {
     std::shared_ptr<metrics_registry> stats;
+    std::shared_ptr<tracer> trace;
     std::shared_ptr<class cache> cache;
     std::any app;
 };

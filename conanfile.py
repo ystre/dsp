@@ -20,6 +20,7 @@ class Dsp(ConanFile):
         self.options["spdlog/*"].header_only = True
         self.options["spdlog/*"].use_std_fmt = False
         self.options["librdkafka/*"].ssl = True
+        self.options["opentelemetry-cpp/*"].with_stl = True
 
     def requirements(self):
         requirements = self.conan_data.get("requirements", [])

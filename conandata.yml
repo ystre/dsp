@@ -9,6 +9,7 @@ requirements:
 - range-v3/0.12.0
 - grpc/1.72.0
 - openssl/3.5.2
+- opentelemetry-cpp/1.22.0
 
 # Nova
 - spdlog/1.14.1

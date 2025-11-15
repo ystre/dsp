@@ -7,6 +7,7 @@
 #include <svc/handler.hpp>
 
 #include <libdsp/metrics.hpp>
+#include <libdsp/trace.hpp>
 #include <libdsp/profiler.hpp>
 
 #include <libnova/data.hpp>
@@ -96,6 +97,8 @@ namespace dat {
 
 auto handler::do_process(nova::data_view data) -> std::size_t {
     DSP_PROFILING_ZONE("process");
+    m_ctx.trace->start("process");
+
     if (data.size() < dat::telemetry::MinimumLength) { return 0; }
 
     const auto msg = dat::message{ data };
@@ -141,6 +144,7 @@ auto handler::do_process(nova::data_view data) -> std::size_t {
  */
 void handler::send(const dsp::message& msg) {
     DSP_PROFILING_ZONE("send");
+    m_ctx.trace->start("send");
     static const auto LabelLoadShed  = std::map<std::string, std::string>{ { "drop_type", "load_shed" } };
     static const auto LabelNotNeeded = std::map<std::string, std::string>{ { "drop_type", "not_needed" } };
     static const auto LabelSubject = [](const std::string& subject) -> std::map<std::string, std::string> {
@@ -180,6 +184,7 @@ void handler::do_process(dat::heartbeat data) {
 
 void handler::do_process(dat::dyn_message data) {
     DSP_PROFILING_ZONE("process-msg");
+    m_ctx.trace->start("process-msg");
     const auto msg = dsp::message {
         .key = { },
         .subject = { },

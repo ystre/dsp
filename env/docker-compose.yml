@@ -39,6 +39,28 @@ services:
       - "--web.console.templates=/etc/prometheus/consoles"
       - "--web.enable-lifecycle"
 
+  # otel:
+    # image: otel/opentelemetry-collector-contrib:0.139.0
+    # container_name: otel
+    # networks:
+      # - dsp_network
+    # ports:
+      # - 4317:4317
+      # - 4318:4318
+      # - 55679:55679
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.11.0
+    container_name: jaeger
+    networks:
+      - dsp_network
+    ports:
+      - 16686:16686
+      - 4317:4317
+      - 4318:4318
+      - 5778:5778
+      - 9411:9411
+
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
