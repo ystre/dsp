@@ -20,7 +20,7 @@ function stage-entry() {
     local broker="localhost:9092"
     local topic_name="ft-test-producer"
 
-    "${BUILD_DIR,,}/src/tools/kafka-client" produce --broker "${broker}" --topic "${topic_name}" --count 1 --size 200
+    "${BUILD_DIR,,}/dsp-tools/kafka-client" produce --broker "${broker}" --topic "${topic_name}" --count 1 --size 200
     messages=$(kcat -b "${broker}" -C -t "${topic_name}" -J -c 1)
 
     check "$(jq -r '.key' <<< "${messages}")" "null" "Key"

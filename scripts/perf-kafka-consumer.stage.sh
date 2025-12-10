@@ -23,7 +23,7 @@ function load-data() {
         docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server "${broker}" --topic "${topic_name}" --create --partitions 1 --config retention.ms=86400000
 
         msg "Loading data..."
-        "${BUILD_DIR,,}/src/tools/kafka-client" produce \
+        "${BUILD_DIR,,}/dsp-tools/kafka-client" produce \
             --broker "${broker}" \
             --topic "${topic_name}" \
             --count 10M \
@@ -43,7 +43,7 @@ function stage-entry() {
 
     load-data "${broker}" "${topic_name}"
 
-    "${BUILD_DIR,,}/src/tools/kafka-client" consume \
+    "${BUILD_DIR,,}/dsp-tools/kafka-client" consume \
         --broker "${broker}" \
         --topic "${topic_name}" \
         --group-id "${group_id}" \

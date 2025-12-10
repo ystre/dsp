@@ -18,7 +18,6 @@ G_ARTIFACT_DIR="${G_PROJECT_DIR}/.tmp"
 G_REPORT_DIR="${G_ARTIFACT_DIR}/reports"
 G_INSTALL_DIR="${G_ARTIFACT_DIR}/install"
 
-STATUS_CODE=0
 INTERRUPTED=0
 
 trap on-interrupt SIGINT
@@ -109,7 +108,7 @@ function run-stage() {
 
     if [[ ${exit_code} -ne 0 ]]; then
         msg "${COLOR_RED}Stage \`${stage}\` failed${COLOR_DEF} after ${stage_time}"
-        STATUS_CODE=1
+        exit 1
     else
         if [[ "${INTERRUPTED}" -eq 1 ]]; then
             msg "${COLOR_YELLOW}Stage \`${stage}\` interrupted${COLOR_DEF} after ${stage_time}"
@@ -128,8 +127,6 @@ function main() {
     for stage in ${stages[@]}; do
         run-stage "${stage}"
     done
-
-    return ${STATUS_CODE}
 }
 
 parse_args "$@"

@@ -26,7 +26,7 @@ function stage-entry() {
 
     docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server "${broker}" --topic "${topic_name}" --create --partitions 5
 
-    SPDLOG_LEVEL=trace "${BUILD_DIR,,}/src/tools/kafka-client" consume --broker "${broker}" --topic "${topic_name}" --group-id ft > "${LOG_CLIENT}" 2>&1&
+    SPDLOG_LEVEL=trace "${BUILD_DIR,,}/dsp-tools/kafka-client" consume --broker "${broker}" --topic "${topic_name}" --group-id ft > "${LOG_CLIENT}" 2>&1&
 
     kcat -b "${broker}" -P -t "${topic_name}" -K, <<< "keyA,hello kafka"
     kcat -b "${broker}" -P -t "${topic_name}" -K, <<< "keyB,hello again"

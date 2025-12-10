@@ -21,8 +21,8 @@ function stage-entry() {
     yq --yaml-output '.dsp.interfaces.northbound.enabled=true' "${dsp_config_src}" > "${tmp_config}"
     msg "Configuration is saved to: \`${tmp_config}\`"
 
-    "${BUILD_DIR,,}/src/tools/kafka-client" produce --broker "${broker}" --topic "${topic_name_input}" --count 5M --size 200
-    2>&1 DSP_CONFIG="${tmp_config}" "${BUILD_DIR,,}/src/svc/svc" | tee "${LOG_SVC}"
+    "${BUILD_DIR,,}/dsp-tools/kafka-client" produce --broker "${broker}" --topic "${topic_name_input}" --count 5M --size 200
+    2>&1 DSP_CONFIG="${tmp_config}" "${BUILD_DIR,,}/svc/svc/svc" | tee "${LOG_SVC}"
 
     metrics=$(curl --silent "${metrics_address}" | grep --invert-match -E '^#')
 

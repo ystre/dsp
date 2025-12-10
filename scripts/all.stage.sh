@@ -10,6 +10,7 @@ function stage-entry() {
         perf-kafka-producer
         perf-kafka-consumer
         perf-dsp
+        perf-dsp-k2k
         doc
         create-perf-report
     )

@@ -31,10 +31,10 @@ function stage-entry() {
     yq --yaml-output '.dsp.interfaces.northbound.enabled=false' "${dsp_config_src}" > "${tmp_config}"
     msg "Configuration is saved to: \`${tmp_config}\`"
 
-    DSP_CONFIG="${tmp_config}" "${BUILD_DIR,,}/src/svc/svc" > "${LOG_SVC}" 2>&1&
+    DSP_CONFIG="${tmp_config}" "${BUILD_DIR,,}/svc/svc/svc" > "${LOG_SVC}" 2>&1&
     sleep 1     # TODO(feat): Reconnect support in simulator.
-    "${BUILD_DIR,,}/src/svc/sim" --address "${service_address}" > "${LOG_SIM}" 2>&1&
-    "${BUILD_DIR,,}/src/tools/tcp-client" --address "${service_address}" --count 20000000 --size 200 --batch 10
+    "${BUILD_DIR,,}/svc/svc/sim" --address "${service_address}" > "${LOG_SIM}" 2>&1&
+    "${BUILD_DIR,,}/dsp-tools/tcp-client" --address "${service_address}" --count 20000000 --size 200 --batch 10
 
     metrics=$(curl --silent "${metrics_address}" | grep --invert-match -E '^#')
 
