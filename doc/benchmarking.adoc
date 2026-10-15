@@ -1,0 +1,187 @@
+[[benchmarking]]
+= Benchmarking
+
+The benchmarking framework turns "run the load generator and look at the
+numbers" into repeatable, comparable, explainable results. It lives in
+`tools/bench/` (Python standard library only, run with `python3 -I`) and
+`bench/`.
+
+== Principles
+
+* *A result is a distribution, not a number.* Every scenario runs `repeat`
+  times; the framework reports medians and the spread (max - min over median).
+  A change smaller than the spread is noise.
+* *Record the environment with the result.* Kernel, CPU, governor, SMT, THP,
+  sysctls and NIC offloads go into `env.json`; results from different
+  environments are not compared silently.
+* *Explain, don't just report.* The server's own counters are captured before
+  and after every repeat, so each result carries CPU per message, batching
+  factors and error counts alongside throughput and latency.
+* *Never trust a saturated generator.* Runs the load generator marks invalid
+  (<<loadgen>>, self-check) are reported as such and cannot become baselines.
+* *Open loop for latency.* Latency figures come from open-loop scenarios at a
+  stated offered load; closed-loop latency describes the pipeline depth.
+
+== Components
+
+[cols="2,5",options="header"]
+|===
+| Path | Role
+| `bench/scenarios/*.toml` | Scenario catalog (<<bench-scenarios>>).
+| `tools/bench/run.py` | Runs one scenario on a target (`local` or `k8s`) and writes `results/<run-id>/`.
+| `tools/bench/compare.py` | Compares two results (or two Google Benchmark outputs) with per-figure thresholds; exit code 1 on regression.
+| `tools/bench/report.py` | AsciiDoc table of one or more results (used for <<performance>>).
+| `tools/bench/sysinfo.py` | Environment snapshot.
+| `bench/baselines/` | Reference results CI compares against (<<bench-baselines>>).
+| `*.bench.cpp` | Micro-benchmarks (Google Benchmark) next to the code they measure; `bench-<module>` executables.
+|===
+
+[[bench-scenarios]]
+== Scenario format
+
+[source,toml]
+----
+[[scenario]]
+name        = "latency-echo-1m"          # unique across files
+description = "Echo 200 B at 1M msg/s over 64 connections."
+count       = 0                           # messages per connection (or)
+duration_s  = 60                          # seconds; the first one reached ends a repeat
+warmup_s    = 10                          # excluded from the summary by the load generator
+repeat      = 3
+server_args = []                          # extra server flags (local target)
+
+[scenario.loadgen]                        # load generator CLI (doc: loadgen, CLI)
+type        = "echo"
+mode        = "open-loop"
+rate        = 1_000_000
+payload     = "fixed:200"
+connections = 64
+threads     = 8
+
+[scenario.local]                          # CPU partitioning on the local target (taskset)
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]                     # allowed relative regression per figure (compare.py)
+"latency_ns.p99" = 0.10
+----
+
+Before running, the runner asks the load generator for its capabilities
+(<<loadgen-capabilities>>) and *skips* (exit code 3) scenarios it cannot run;
+`run.py --list` shows which scenarios are runnable and what the others need.
+
+=== Catalog
+
+[cols="2,5",options="header"]
+|===
+| Scenario | Question it answers
+| `smoke`, `smoke-echo` | Does the whole pipeline work? (Phase 1; CI)
+| `throughput-64B` ... `throughput-64KiB`, `throughput-mixed` | Maximum messages/s and bytes/s, and CPU per message, by message size.
+| `latency-echo-100k`, `latency-echo-1m`, `latency-reqresp-1m` | Tail latency at a given offered load; the load where p99 bends is the usable capacity.
+| `churn` | Connections per second (accept, handshake, teardown).
+| `conn-scale-100k` | Memory and CPU per mostly idle connection.
+| `udp-pps-64B`, `udp-echo-1m` | Datagram rate and UDP latency (M3).
+| `ws-throughput-512B` | Cost of WebSocket framing compared to `throughput-512B` (M4).
+|===
+
+== Running
+
+[source,sh,subs="attributes+"]
+----
+python3 -I tools/bench/run.py --list --bin-dir build/release/bin
+python3 -I tools/bench/run.py --scenario smoke --bin-dir build/release/bin            # local
+python3 -I tools/bench/run.py --scenario smoke --target k8s --namespace {project} --release {project}
+python3 -I tools/bench/compare.py results/<baseline-run> results/<candidate-run>
+python3 -I tools/bench/report.py results/<run>... --output doc/results/<name>.adoc
+----
+
+Local target:: For every repeat, the runner starts the server pinned to
+`server_cpus` on free ports, scrapes its metrics, runs the generator pinned to
+`loadgen_cpus`, scrapes again, reads the server's CPU time (per-thread
+`schedstat`, nanosecond resolution) and peak RSS, and stops it. With
+`--server-addr`/`--server-admin` it measures a server that is already running
+instead (no CPU or RSS figures).
+Kubernetes target:: The runner installs the load generator chart
+(<<deployment-loadgen>>) as a Job per repeat against the server release,
+reads the summary from the pod log and the server metrics through the API
+server's pod proxy, then uninstalls the Job. Live figures are on the dashboard.
+
+[[bench-results]]
+== Results
+
+----
+results/<scenario>-<target>-<timestamp>/
+  env.json                     environment snapshot
+  loadgen-<n>.json             load generator summary of repeat n (contract format)
+  server-<n>-before.prom       server metrics before / after repeat n
+  server-<n>-after.prom
+  server-<n>.log               server output (local target)
+  summary.json                 bench-result/1: scenario, per-repeat figures, medians, spread, validity
+----
+
+Figures in `summary.json` (`figures`, compared by `compare.py`):
+
+[cols="2,1,4",options="header"]
+|===
+| Figure | Better | Source
+| `throughput.messages_per_s`, `throughput.bytes_per_s` | higher | load generator
+| `throughput.connections_per_s` | higher | load generator (churn)
+| `latency_ns.p50` ... `latency_ns.p9999`, `latency_ns.max` | lower | load generator (open loop)
+| `server.ns_per_message` | lower | server CPU time / messages the server received
+| `server.cpu_cores` | lower | server CPU time / run time
+| `server.max_rss_kib` | lower | server peak RSS
+|===
+
+[[bench-baselines]]
+== Baselines and regression gates
+
+`bench/baselines/` holds the reference results CI compares against:
+`smoke.json` for `ci/perf-smoke.sh` and `micro/bench-*.json` for
+`ci/micro-bench.sh`. They are host-specific (their `env` names the host).
+Comparisons warn by default; `CI_PERF_GATE=1` makes regressions fail the
+pipeline, which is meaningful only on a dedicated, tuned benchmark host.
+Refresh a baseline deliberately, after an intended change, by copying a clean
+and valid run's `summary.json`.
+
+[[bench-host]]
+== Host tuning checklist
+
+Benchmark numbers are only comparable on a host prepared the same way. The
+snapshot records most of these; the rest belongs in the run notes.
+
+[cols="2,4",options="header"]
+|===
+| Item | Setting for benchmark runs
+| CPU frequency | `performance` governor; note turbo/boost state (recorded). Laptop/desktop hosts with `powersave` vary by tens of percent.
+| SMT | Pin server and generator to different physical cores; never share a core's siblings between them.
+| CPU isolation | Server and generator CPUs isolated from other work (`isolcpus`, `nohz_full`, or at least an idle host).
+| IRQ affinity and RSS | NIC queues = reactor count; each queue's IRQ on its reactor's core; `irqbalance` off.
+| NIC offloads | GRO/GSO/TSO on (recorded); `rx-gro-hw` where supported; coalescing (`ethtool -C`) noted.
+| Socket buffers | `net.core.rmem_max`/`wmem_max`, `net.ipv4.tcp_rmem`/`tcp_wmem` large enough for the bandwidth-delay product.
+| Backlogs | `net.core.somaxconn` ≥ listener backlog; `net.ipv4.tcp_max_syn_backlog` for churn runs.
+| Ports and files | `net.ipv4.ip_local_port_range` wide on the generator; `nofile` limits above the connection count.
+| Transparent huge pages | `madvise` (recorded); the server requests huge pages for its pools explicitly.
+| io_uring | `kernel.io_uring_disabled = 0` (recorded); container seccomp profile allows it (<<arch-security>>).
+|===
+
+== Topologies and their caveats
+
+Loopback (one host):: Easiest and most repeatable, but not a network: no NIC,
+no interrupts, no GRO from hardware, `SEND_ZC` always falls back to copying,
+and server and generator compete for the same caches and memory bandwidth.
+Good for code-path comparisons (epoll vs io_uring, handler cost), misleading
+for absolute capacity.
+Two hosts:: The reference topology for capacity and latency claims: a
+dedicated server host and a generator host (or several) on the same switch.
+Kubernetes (one node, the lab):: Adds the pod network (veth, bridge, iptables
+or eBPF) to every packet; `performance.hostNetwork` removes it. Useful for
+end-to-end and deployment validation and for comparing chart settings.
+
+[[bench-micro]]
+== Micro-benchmarks
+
+Hot-path functions (frame decode, WebSocket unmask, histogram update,
+send-queue operations) get Google Benchmark micro-benchmarks next to their
+code (`*.bench.cpp`). They answer "how fast is this function on one core" and
+catch regressions early; `ci/micro-bench.sh` runs them with repetitions and
+compares medians with `bench/baselines/micro/`.

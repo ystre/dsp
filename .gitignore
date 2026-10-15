@@ -1,7 +1,12 @@
-build/
-gdb.txt
-compile_commands.json
-
-doc/dsp.html
-
+.cache/
 .tmp/
+/build/
+/dist/
+/results/
+__pycache__/
+deploy/helm/*/charts/
+# Exact version pins in Chart.yaml; the lock only adds a timestamp and a digest of that list.
+deploy/helm/*/Chart.lock
+
+CMakeUserPresets.json
+compile_commands.json

@@ -1,0 +1,3 @@
+Kafka cluster "{{ .Values.name }}" (Strimzi; the operator must watch {{ .Release.Namespace }}):
+  bootstrap: {{ .Values.name }}-kafka-bootstrap.{{ .Release.Namespace }}.svc:9092
+  ready:     kubectl wait kafka/{{ .Values.name }} -n {{ .Release.Namespace }} --for=condition=Ready

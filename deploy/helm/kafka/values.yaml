@@ -1,0 +1,32 @@
+# Kafka chart values (doc/deployment.adoc, "Kafka chart").
+#
+# A KRaft cluster. Used twice: as the platform's shared cluster (dependencies
+# chart) and, optionally, as a release's dedicated cluster (integration chart,
+# for benchmarks of a Kafka sink without neighbours). Needs the Strimzi operator
+# watching its namespace (the dependencies chart installs it cluster-wide). Not
+# used by the server yet (no northbound sink).
+
+name: kafka
+version: 4.3.1
+replicas: 1
+# Single node: combined controller + broker; replication factor 1.
+roles: [controller, broker]
+storage:
+  size: 20Gi
+  deleteClaim: true
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+heap: 1g
+partitions: 12
+config: {}
+kafkaExporter:
+  enabled: true
+  topicRegex: ".*"
+  groupRegex: ".*"
+podMonitor:
+  enabled: true
+  interval: 5s

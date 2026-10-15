@@ -1,0 +1,70 @@
+[[overview]]
+= Overview
+
+== Goals
+
+[horizontal]
+Throughput per core:: Messages and bytes per CPU-second are the primary figure
+of merit. A server that needs half the cores for the same load is twice as
+good, whatever its peak.
+Tail latency:: p99, p99.9 and p99.99 under a stated offered load, measured
+without coordinated omission (<<loadgen-open-loop>>).
+Connection scale:: Hundreds of thousands of mostly idle connections per pod,
+with memory per connection bounded and known.
+Predictability:: Bounded memory, backpressure instead of unbounded queues,
+no allocation and no locks on the data path.
+Pluggable logic:: The application is a _handler_ (<<handler-api>>), compiled in
+and dispatched statically; the server owns transports, buffers and scheduling.
+
+Non-goals for now: a general-purpose HTTP framework, dynamic plugin loading,
+portability beyond Linux. Northbound sinks (Kafka, as in the first-generation
+DSP prototype) are out of scope until a use case needs them; the platform
+already runs a shared Kafka cluster, and releases declare their topics on it
+(<<deployment-topics>>).
+
+== Phases
+
+[cols="1,4"]
+|===
+| Phase 1 (done) | Design, contracts, CI, benchmarking framework, Helm charts, CSAR, dashboards. Hello-world server and load generator.
+| Phase 2 | The server and the load generator as designed, milestone by milestone (<<roadmap>>), each one measured with the framework.
+|===
+
+== Repository layout
+
+The layout follows the Canonical Project Structure: every component is a
+directory holding a same-named source directory, with unit tests
+(`*.test.cpp`) and micro-benchmarks (`*.bench.cpp`) next to the code.
+
+----
+project.env            project identity: name, metric prefix, vendor (single source of truth)
+VERSION                release version
+libproto/libproto/     benchmark wire protocol codec
+libadmin/libadmin/     Prometheus exposition and the admin HTTP endpoint
+server/server/         the server
+loadgen/loadgen/       the load generator
+contract/              machine-readable contracts: metrics, load generator summary schema
+tests/                 functional tests
+bench/scenarios/       benchmark scenario catalog;  bench/baselines/: CI reference results
+tools/                 bench/ (runner, compare, report), csar/, contract.py, rename.sh, versioning
+deploy/helm/           server, loadgen, kafka and umbrella charts; deps (the platform)
+deploy/grafana/        dashboard generator
+deploy/lab/            platform, install step, lab bring-up (shared with the CI deploy test)
+csar/                  ETSI SOL004 package sources
+ci/                    CI stages (CI-agnostic shell scripts)
+env/                   build image, runtime image, Conan profile
+doc/                   this book
+----
+
+== Quick start
+
+[source,sh,subs="attributes+"]
+----
+tools/configure.sh build/release Release && cmake --build build/release
+BIN_DIR=build/release/bin tests/run.sh                       # functional tests
+python3 -I tools/bench/run.py --scenario smoke --bin-dir build/release/bin
+ci/e2e.sh                                                    # the whole pipeline on a clean copy
+deploy/lab/up.sh                                             # k3s lab: image, charts, helm test
+----
+
+Grafana (lab): `http://localhost:30300/d/{project}-server`.

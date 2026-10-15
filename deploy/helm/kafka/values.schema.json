@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Kafka chart values",
+  "type": "object",
+  "required": ["name", "version", "replicas", "storage", "resources", "heap", "partitions"],
+  "properties": {
+    "enabled": { "type": "boolean", "description": "Set by the umbrella chart's condition." },
+    "global": { "type": "object" },
+    "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "version": { "type": "string" },
+    "replicas": { "type": "integer", "minimum": 1 },
+    "roles": { "type": "array", "items": { "enum": ["controller", "broker"] } },
+    "storage": {
+      "type": "object",
+      "required": ["size"],
+      "properties": { "size": { "type": "string" }, "deleteClaim": { "type": "boolean" } }
+    },
+    "resources": { "type": "object" },
+    "heap": { "type": "string", "pattern": "^[0-9]+[kmgKMG]$" },
+    "partitions": { "type": "integer", "minimum": 1 },
+    "config": { "type": "object" },
+    "kafkaExporter": { "type": "object" },
+    "podMonitor": { "type": "object" }
+  },
+  "additionalProperties": false
+}

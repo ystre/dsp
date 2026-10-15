@@ -1,0 +1,224 @@
+[[deployment]]
+= Deployment
+
+== Charts
+
+[source,subs="attributes+"]
+----
+deploy/helm/
+  server/    {project}-server    the service: workload, Services, monitoring resources, dashboard, helm test
+  loadgen/   {project}-loadgen   one load generator run as an Indexed Job
+  kafka/     {project}-kafka     a KRaft Kafka cluster (Strimzi custom resources): shared or dedicated
+  umbrella/  {project}           integration chart: server, Kafka topics, dedicated kafka, loadgen
+  deps/      {project}-deps      the platform, once per cluster: kube-prometheus-stack, Strimzi, shared Kafka
+----
+
+The directories are named after roles. The chart names carry the project name
+and are rewritten by `tools/rename.sh`. In the umbrella chart, the subcharts are
+aliased to role keys (`server`, `kafka`, `loadgen`), so values files do not
+depend on the project name either.
+
+[[deployment-scopes]]
+Two scopes are kept apart:
+
+* *Per release* (the umbrella chart): everything a deployment owns, including
+  its Kafka topics. One release per namespace; the lab and the CI deploy test
+  use different namespaces, so their metrics (the `namespace` label, the
+  dashboard's namespace selector) and benchmark results never mix, and their
+  topics carry the namespace as a prefix (<<deployment-topics>>).
+* *Per cluster* (the dependencies chart, <<deployment-deps>>): operators, the
+  shared observability stack and the shared Kafka cluster. CRDs are
+  cluster-wide and owned by exactly one Helm release, so this is installed
+  once and never by a release.
+
+Resource names are `<release>-server` and `<release>-loadgen`. Inside one
+umbrella release, the load generator therefore finds the server at
+`<release>-server:7200` without configuration.
+
+All charts have a `values.schema.json`, so mistyped or unknown values fail at
+install time. Their versions equal `VERSION` (`tools/sync-version.sh`).
+
+[source,sh,subs="attributes+"]
+----
+deploy/lab/platform.sh                              # once per cluster: the platform (below)
+helm dependency update deploy/helm/umbrella
+helm install {project} deploy/helm/umbrella -n {project} --create-namespace
+helm test {project} -n {project}
+----
+
+[[deployment-server]]
+== Server chart
+
+[cols="3,2,5",options="header"]
+|===
+| Value | Default | Meaning
+| `image.repository`, `image.tag`, `image.pullPolicy` | `localhost:5000/{project}`, appVersion, `IfNotPresent` | Image. `global.image.*` (umbrella) overrides.
+| `binaries.server`, `binaries.loadgen` | `{project}-server`, `{project}-loadgen` | Executables in the image.
+| `workload.kind` | `Deployment` | Or `StatefulSet` (stable pod names, headless Service).
+| `workload.replicas` | `1` |
+| `ports.tcp`, `ports.udp`, `ports.ws` | 7200 on; 7201, 7280 off | Listeners; UDP and WebSocket arrive with M3 and M4.
+| `ports.admin.port` | `9555` | `/metrics`, `/healthz`, `/readyz`.
+| `extraArgs`, `extraEnv` | `[]` | Extra server flags and environment.
+| `config.enabled`, `config.content` | off | Configuration file (<<arch-config>>, Phase 2), mounted from a ConfigMap; a checksum annotation rolls the pods on change.
+| `service.type` | `ClusterIP` | Or `NodePort` / `LoadBalancer` (`service.nodePorts.*`, `service.externalTrafficPolicy`).
+| `service.headless` | `false` | Extra headless Service (always present for StatefulSets).
+| `performance.*` | off | <<deployment-tuning>>.
+| `resources` | 1 CPU, 128 Mi request; 1 Gi memory limit; *no CPU limit* | CFS throttling distorts latency; see Guaranteed QoS below.
+| `podSecurityContext`, `securityContext` | non-root 65532, read-only root, no capabilities, `RuntimeDefault` seccomp |
+| `monitoring.podMonitor` | on, 5 s | Prometheus Operator `PodMonitor` on the admin port.
+| `monitoring.prometheusRule` | off | Recording rules (rates, reactor utilisation) and alerts (down, reactor saturated, protocol errors, rejections, backpressure).
+| `monitoring.dashboard` | on | ConfigMap with the Grafana dashboard, labelled for the Grafana sidecar (`grafana_dashboard: "1"`).
+| `podDisruptionBudget`, `autoscaling`, `networkPolicy` | off | The usual; the NetworkPolicy allows data ports from `dataFrom` and the admin port from the `platform` namespace (Prometheus).
+| `tests.enabled`, `tests.count` | on, 10000 | `helm test`: an echo run of the load generator against the Service; fails on any integrity error.
+|===
+
+[[deployment-tuning]]
+== Performance tuning on Kubernetes
+
+[cols="2,5",options="header"]
+|===
+| Setting | Effect and requirements
+| `performance.guaranteedQoS: true` with integer `resources.requests.cpu` | Requests equal limits: Guaranteed QoS. With the kubelet's static CPU manager policy (`--cpu-manager-policy=static`), the containers get exclusive CPUs, and the server runs one reactor per CPU in its affinity mask. The topology manager (`single-numa-node`) keeps them on one NUMA node.
+| No CPU limit (default) | Without Guaranteed QoS, a CPU limit means CFS throttling: periodic stalls of up to the CFS period, which show as latency spikes. The dashboard plots throttled time.
+| `performance.hostNetwork: true` | The server binds on the node's interfaces: no veth, bridge or NAT on the path. One pod per node and port. Use it for capacity measurements.
+| `performance.sysctls` | Namespaced sysctls. `net.ipv4.ip_local_port_range` is "safe"; `net.core.somaxconn` and `net.ipv4.tcp_*` buffers need the kubelet's `--allowed-unsafe-sysctls`.
+| `performance.hugepages2Mi` | Requests 2 MiB huge pages (the node must have them reserved) and mounts them for the buffer pools.
+| `performance.runtimeClassName`, `priorityClassName` | E.g. a runtime class with a seccomp profile that allows io_uring (<<arch-security>>); priority over batch workloads.
+| `topologySpreadConstraints`, `affinity` | One server per node, away from the load generators.
+| Node level (outside the chart) | NIC RSS queues and IRQ affinity aligned with the CPUs given to the pod; `irqbalance` off on benchmark nodes; the governor and the other host settings of <<bench-host>>.
+|===
+
+[[deployment-loadgen]]
+== Load generator chart
+
+One release is one run: an Indexed Job with `instances` pods, each running the
+generator with `--instance <index>` and the flags in `run` (keys equal the
+contract's CLI flags, <<loadgen-cli>>). The pods serve `loadgen_*` metrics
+(PodMonitor) and linger `metrics.linger` seconds after the run for the final
+scrape. `target` defaults to `<release>-server:7200`. `tools/bench/run.py
+--target k8s` installs it once per repeat and reads the summary from the pod log.
+
+[[deployment-topics]]
+== Kafka: shared cluster and topics
+
+The platform runs one shared Kafka cluster (`kafka` in namespace `platform`,
+bootstrap `kafka-kafka-bootstrap.platform.svc:9092`). A release does not own a
+cluster; it owns *topics* on it, listed in the umbrella chart's `topics.items`.
+
+* Each topic is a Strimzi `KafkaTopic` in the cluster's namespace (the topic
+  operator watches only there), named `<prefix><name>`. The prefix defaults to
+  `<release namespace>.`: `{project}.data` for the lab, and
+  `{project}-ci.<run id>.data` for the CI deploy test, so lab and CI topics,
+  and the topics of different CI runs, never mix.
+* Labels: `owner-namespace` (the release namespace), `app.kubernetes.io/instance`
+  (the release), plus `topics.labels` (CI adds `ci-run=<run id>`).
+* Topics outlive the release (`helm.sh/resource-policy: keep`): uninstalling or
+  reinstalling keeps their data. `deploy/lab/down.sh --delete-topics` deletes
+  the topics of the release's current revision as well.
+* The CI deploy test deletes its topics after a successful run only. After a
+  failure they are kept for inspection, and later runs list them as a warning
+  (<<ci>>). Nothing deletes them automatically:
+  `kubectl delete kafkatopic -n platform -l ci-run=<run id>` does.
+  Alternatively, `kubectl delete kafkatopic -n platform -l owner-namespace={project}-ci`
+  deletes all CI created topics.
+
+Isolation is by name, not by resources: the lab and a concurrent CI run share
+the brokers. For benchmarks of a Kafka sink without neighbours, a release can
+have a *dedicated* cluster (`kafka.enabled=true` in the umbrella chart): the
+`kafka` chart in the release namespace, and the topics go there.
+
+The `topics.items` default (`data`) is a placeholder: the server has no
+northbound sink yet (<<roadmap>>).
+
+[[deployment-kafka]]
+== Kafka chart
+
+A KRaft Kafka cluster (`Kafka` + `KafkaNodePool`, single node by default:
+combined controller and broker, replication factor 1) with kafka-exporter and
+PodMonitors for the brokers and the exporter. Bootstrap:
+`kafka-kafka-bootstrap.<namespace>.svc:9092`. It is used twice: as the shared
+cluster (a subchart of the dependencies chart) and as an optional dedicated
+cluster of a release (a subchart of the umbrella chart, off by default). It
+needs the Strimzi operator watching its namespace; the dependencies chart
+installs it watching every namespace.
+
+[[deployment-deps]]
+== Dependencies chart (the platform)
+
+What every release relies on, installed once per cluster, each part a toggle:
+
+* `kube-prometheus-stack` (92.0.0): Prometheus Operator, Prometheus (5 s scrape,
+  picks up monitors and rules from every namespace), Grafana on NodePort 30300
+  with anonymous viewer access and the dashboard sidecar, node-exporter with
+  the TCP/UDP counters the dashboard needs. These are lab settings; production
+  values belong in an override file.
+* `strimzi-kafka-operator` (1.2.0), watching every namespace.
+* `kafka`: the shared Kafka cluster (<<deployment-topics>>, <<deployment-kafka>>).
+
+`deploy/lab/platform.sh` installs it as release `platform` in namespace
+`platform` (`PLATFORM_NAMESPACE`, `PLATFORM_RELEASE`), together with the image
+registry, and waits for the shared Kafka cluster to be Ready. It is
+idempotent; extra helm arguments go after `--`. A component whose CRDs the cluster already serves
+from another release is left disabled and the existing installation is used;
+one that this release installed before stays enabled.
+
+[[deployment-lab]]
+== Lab (k3s, one node)
+
+Two flows deploy the integration chart. Both use the same install step,
+`deploy/lab/install.sh`, and differ in what they deploy and where:
+
+[cols="2,3,3",options="header"]
+|===
+| | Lab (`deploy/lab/up.sh`) | CI deploy test (`ci/deploy-test.sh`, <<ci>>)
+| Deploys | A released package: the CSAR (validated first) or a packaged chart. `--source`: the working tree. | The package under test: the integration chart in the workspace's `dist/`.
+| Namespace | `{project}` (`LAB_NAMESPACE`) | `{project}-ci` (`CI_DEPLOY_NAMESPACE`)
+| Image | The CSAR's own image if it carries one, else the local Docker image of the chart's `appVersion`; `--source` builds it. | The one the pipeline built.
+| Dashboard | Shipped with the release. | Off; the lab dashboard shows `{project}-ci` through its namespace selector.
+| Platform | Installs it if missing (`platform.sh`). | Must be there; never installs cluster-wide components.
+| Kafka topics | `{project}.<topic>`; kept by `down.sh` unless `--delete-topics`. | `{project}-ci.<run id>.<topic>`; deleted after a successful run, kept after a failure.
+| Lifetime | Stays up; `helm test` at the end. | `helm test`, the `smoke` scenario on Kubernetes, uninstall (`CI_DEPLOY_KEEP=1` keeps it).
+|===
+
+[source,sh,subs="attributes+"]
+----
+deploy/lab/platform.sh                  # registry on localhost:5000 + dependencies chart; once per cluster
+deploy/lab/up.sh                        # dist/{project}-<VERSION>.csar into namespace "{project}"
+deploy/lab/up.sh <file.csar|chart.tgz>  # another released package
+deploy/lab/up.sh --source               # the working tree (needs a release build: ci/run.sh build-release)
+deploy/lab/up.sh -- --set kafka.enabled=true    # extra helm arguments after --: here a dedicated Kafka
+deploy/lab/down.sh [--namespace N] [--release R] [--delete-topics]
+                                        # uninstall one release (topics, namespace, registry, platform stay)
+----
+
+`install.sh --chart <dir|.tgz> [--namespace] [--release] [--image-repository]
+[--image-tag] [-- <helm args>]` renders the release first and stops if the
+cluster does not serve one of the kinds it renders (the platform is missing),
+or if the Kafka cluster its topics go to does not exist. Then it installs or
+upgrades, and waits for the workloads, a dedicated Kafka cluster and the topics
+to be Ready. A chart directory gets its subcharts packaged
+first. The image tag defaults to the chart's `appVersion`.
+
+Grafana: `http://localhost:30300/d/{project}-server`.
+
+== Dashboard
+
+`deploy/grafana/build_dashboard.py` generates the dashboard
+(`deploy/helm/server/dashboards/server.json`) from the metrics contract. It
+has variables for namespace, server pod and reactor, and load-run annotations.
+
+[cols="1,4",options="header"]
+|===
+| Row | Panels
+| Overview | Messages/s and bytes/s in and out, connections, accepts/s, RTT p99, server CPU cores, CPU per message, build/backend, reactors, integrity/protocol/rejection/UDP-drop counters (red if any), generator saturation.
+| Pipeline | Generator sent → server received → server replied → generator received; bytes; messages by type and by reactor (imbalance).
+| Latency | RTT quantiles and heatmap (generator), handler time per receive, message age, generator send lag.
+| Connections | Open by transport, accepts/closes/rejections by reason, errors.
+| Reactors | Utilisation, loop iterations, messages per iteration, syscalls by operation, io_uring batching, buffer ring exhaustion, zero-copy results, container CPU and throttling.
+| Backpressure and memory | Backpressure events and time, send queues, buffers by kind, container memory.
+| UDP | Datagrams, server drops, kernel UDP errors.
+| Node | Softirq per core, NIC packets, TCP retransmits and listen overflows, NIC drops.
+|===
+
+In Phase 1, only build info, connections, bytes, messages and protocol errors
+have data; the other panels are there to review layout and names.

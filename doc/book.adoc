@@ -1,0 +1,42 @@
+= dsp: High-Performance Network Server
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectnums:
+:sectanchors:
+:icons: font
+:source-highlighter: rouge
+:experimental:
+// The project name: every chapter refers to {project}; tools/rename.sh rewrites this line.
+:project: dsp
+
+[preface]
+== About this book
+
+This book is the design and the operating manual of {project}, a network server
+built for the highest throughput per core and the lowest tail latency the Linux
+kernel allows, TCP first, with UDP and WebSocket designed in.
+
+Phase 1 (this version) delivers the framework: the design, the contracts every
+implementation must honour, a CI pipeline that runs anywhere, the benchmarking
+framework, the Helm charts and the ETSI SOL004 package. The server and the load
+generator exist as minimal "hello world" programs that exercise all of it.
+Phase 2 implements the design (<<roadmap>>).
+
+Chapters marked *Contract* define names, formats and semantics that are fixed
+across implementations; tools, dashboards and tests depend on them.
+
+include::overview.adoc[leveloffset=+1]
+include::architecture.adoc[leveloffset=+1]
+include::handler-api.adoc[leveloffset=+1]
+include::protocol.adoc[leveloffset=+1]
+include::metrics.adoc[leveloffset=+1]
+include::loadgen.adoc[leveloffset=+1]
+include::benchmarking.adoc[leveloffset=+1]
+include::performance.adoc[leveloffset=+1]
+include::ci.adoc[leveloffset=+1]
+include::deployment.adoc[leveloffset=+1]
+include::packaging.adoc[leveloffset=+1]
+include::developer-guide.adoc[leveloffset=+1]
+include::release-strategy.adoc[leveloffset=+1]
+include::roadmap.adoc[leveloffset=+1]

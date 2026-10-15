@@ -1,0 +1,80 @@
+[[developer-guide]]
+= Developer guide
+
+== Prerequisites
+
+GCC 16 (C++26), CMake ≥ 3.28, Ninja, Conan 2 (default profile:
+`env/conan-profile`), Python 3.11+ (PyYAML for the CSAR validator), helm,
+kubectl, docker. Optional: clang-format, shellcheck, asciidoctor. The build
+image (`env/build.Dockerfile`, `ci/in-container.sh`) has all of them.
+
+== Build and test
+
+[source,sh]
+----
+tools/configure.sh build/debug Debug -DSANITIZERS=asan    # conan install + cmake configure
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+BIN_DIR=build/debug/bin tests/run.sh                      # functional tests
+
+tools/configure.sh build/release Release && cmake --build build/release
+build/release/bin/bench-libproto                          # micro-benchmarks
+----
+
+Every executable lands in `<build>/bin`. CMake options: `SANITIZERS`
+(`asan` | `tsan`), `PROJ_MARCH` (default `x86-64-v3`; `native` for local
+tuning), `PROJ_WERROR` (default on), `PROJ_STATIC_RUNTIME` (default on),
+`PROJ_BUILD_BENCH`, `BUILD_TESTING`.
+
+== Layout and conventions
+
+* *Canonical Project Structure*: component `foo/` holds its sources in
+  `foo/foo/`, and includes are written as `<foo/header.hpp>`. Unit tests are
+  `*.test.cpp` (compiled into `test-<component>` by `add_test_target`);
+  micro-benchmarks are `*.bench.cpp` (`bench-<component>`, `add_bench_target`).
+* Libraries are named `lib<name>` (`libproto`, `libadmin`); their namespaces
+  drop the prefix (`proto::`, `admin::`). Executables are role directories
+  (`server/`, `loadgen/`) whose binaries take the project name
+  (`OUTPUT_NAME`).
+* C++26, warnings as errors (the nova-cpp warning set, `cmake/warnings.cmake`),
+  `clang-format` with the repository's `.clang-format`, `snake_case`, trailing
+  return types, `m_` members, `not`/`and`/`or` in conditions (as in nova-cpp
+  and o1).
+* The data path has no allocation, no exceptions and no locks
+  (<<arch-principles>>). Exceptions are fine for start-up and configuration
+  errors.
+* Python tools use the standard library (exception: PyYAML in the CSAR
+  validator) and are run with `python3 -I`. A script that imports a sibling
+  module adds its own directory to `sys.path` explicitly.
+* Shell scripts use `set -euo pipefail`, derive paths from their own location,
+  and do not delete anything outside their own temporary directories.
+
+== The project name
+
+The name lives in `project.env` (`PROJECT_NAME`, `METRIC_PREFIX`, `VENDOR`).
+Everything else derives it:
+
+* CMake: binary names, compile definitions;
+* the scripts and Python tools;
+* the dashboard generator;
+* the CSAR templates;
+* this book (`:project:` attribute).
+
+Only a few files must hold it literally: chart names in `Chart.yaml`, chart
+values, generated files, the book's attribute line and the README title.
+
+[source,sh]
+----
+tools/rename.sh <new-name> [<metric-prefix>]   # rewrites project.env and those files, regenerates derived ones
+tools/rename.sh --check                        # CI: the name appears nowhere else
+----
+
+After a rename, reconfigure the build directories and rebuild the image.
+
+== Contracts first
+
+A change to a contract (protocol, metrics, configuration, load generator CLI or
+summary) starts in the contract: `contract/metrics.toml`,
+`contract/loadgen-summary.schema.json`, and the Contract chapters of this
+book. The code, the dashboard and the generated documentation follow.
+CI checks that they agree (<<metrics>>).

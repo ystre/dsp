@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "loadgen-summary/1",
+  "title": "Load generator run summary (Contract, doc/loadgen.adoc)",
+  "description": "Written by the load generator at the end of a run (stdout or --output). tools/bench consumes it. Fields that an implementation cannot measure yet are null, never omitted.",
+  "type": "object",
+  "required": ["schema", "tool", "scenario", "instance", "config", "valid", "invalid_reasons", "self_check",
+               "start_unix_s", "elapsed_s", "sent", "received", "throughput", "latency_ns", "integrity", "errors", "resources"],
+  "properties": {
+    "schema":   { "const": "loadgen-summary/1" },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "revision"],
+      "properties": { "name": { "type": "string" }, "version": { "type": "string" }, "revision": { "type": "string" } }
+    },
+    "scenario": { "type": "string", "description": "Scenario name passed by the runner (--scenario), empty if none." },
+    "instance": { "type": "integer", "minimum": 0, "description": "Generator instance (k8s Job completion index)." },
+    "config": {
+      "type": "object",
+      "required": ["target", "transport", "mode", "type", "connections", "threads", "payload", "batch", "count", "duration_s", "rate"],
+      "properties": {
+        "target":      { "type": "string" },
+        "transport":   { "enum": ["tcp", "udp", "ws", "unix"] },
+        "mode":        { "enum": ["closed-loop", "open-loop", "churn", "idle-fanout"] },
+        "type":        { "enum": ["data", "echo", "req"] },
+        "connections": { "type": "integer", "minimum": 1 },
+        "threads":     { "type": "integer", "minimum": 1 },
+        "payload":     { "type": "string", "description": "Size distribution: fixed:N | uniform:A:B" },
+        "batch":       { "type": "integer", "minimum": 1, "description": "Frames per write (closed loop: also the pipeline depth for echo/req)." },
+        "count":       { "type": "integer", "minimum": 0, "description": "Messages per connection, 0 = unlimited." },
+        "duration_s":  { "type": "number",  "minimum": 0, "description": "0 = unlimited." },
+        "rate":        { "type": "number",  "minimum": 0, "description": "Messages/s in total (open loop), 0 = closed loop." }
+      }
+    },
+    "valid":           { "type": "boolean", "description": "Measurement validity (self-check), independent of errors." },
+    "invalid_reasons": { "type": "array", "items": { "type": "string" } },
+    "self_check":      { "enum": ["passed", "failed", "not-implemented"] },
+    "start_unix_s":    { "type": "number" },
+    "elapsed_s":       { "type": "number", "description": "From the first send to the last send/receive." },
+    "sent":       { "$ref": "#/$defs/volume" },
+    "received":   { "$ref": "#/$defs/volume" },
+    "throughput": {
+      "type": "object",
+      "required": ["messages_per_s", "bytes_per_s"],
+      "properties": { "messages_per_s": { "type": "number" }, "bytes_per_s": { "type": "number" } }
+    },
+    "latency_ns": {
+      "description": "Round-trip latency (echo/req) from the intended send time. null when not measured.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["count", "mean", "p50", "p90", "p99", "p999", "p9999", "max"],
+          "additionalProperties": { "type": "number" }
+        }
+      ]
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["missing", "duplicate", "out_of_order", "corrupt"],
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "errors": {
+      "type": "object",
+      "required": ["connect", "io"],
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "resources": {
+      "type": "object",
+      "required": ["cpu_user_s", "cpu_sys_s", "max_rss_kib"],
+      "properties": { "cpu_user_s": { "type": "number" }, "cpu_sys_s": { "type": "number" }, "max_rss_kib": { "type": "integer" } }
+    }
+  },
+  "$defs": {
+    "volume": {
+      "type": "object",
+      "required": ["messages", "bytes"],
+      "properties": { "messages": { "type": "integer", "minimum": 0 }, "bytes": { "type": "integer", "minimum": 0 } }
+    }
+  }
+}

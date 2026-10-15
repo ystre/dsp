@@ -1,0 +1,8 @@
+apiVersion: v2
+name: dsp-kafka
+description: A KRaft Kafka cluster (Strimzi custom resources) with kafka-exporter and PodMonitors, in the release namespace.
+type: application
+# Kept equal to the root VERSION file (tools/bump-version.sh, ci/pre-checks.sh).
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [kafka, strimzi]

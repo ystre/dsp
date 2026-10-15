@@ -1,0 +1,147 @@
+[[loadgen]]
+= Load generator
+
+`{project}-loadgen` drives the server with the benchmark protocol
+(<<protocol>>), measures throughput and latency, and verifies every reply. It
+must be faster than the server it measures; otherwise it measures itself. This
+chapter specifies the Phase 2 generator. Its command line, summary format and
+capability report are contracts already honoured by the Phase 1 hello world,
+which implements a subset (<<loadgen-phase1>>).
+
+== Design
+
+* *Thread per core, many connections per thread.* Each generator thread owns
+  its connections and an event loop (io_uring or epoll, as in the server), is
+  pinned, and shares nothing with the other threads during the run.
+* *Load models* (`--mode`):
+** `closed-loop`: every connection keeps `--batch` messages in flight (sink:
+   writes batches back to back). Measures maximum throughput. Latency in this
+   mode is a function of the pipeline depth, not a service-level figure.
+** [[loadgen-open-loop]]`open-loop`: messages are sent on a fixed schedule at
+   `--rate` messages/s in total, spread over the connections. Latency is
+   measured from the *intended* send time on the schedule, not from the moment
+   the message was actually written. When the server stalls, the messages that
+   could not be sent on time accumulate latency as real clients would; a
+   closed-loop measurement would instead pause sending and hide the stall
+   (coordinated omission). Late sends are measured separately as send lag.
+** `churn`: each connection is opened, used for one exchange and closed, as fast
+   as possible. Measures accept and teardown cost (`throughput.connections_per_s`).
+** `idle-fanout`: opens `--connections` connections (ramped), then keeps them
+   mostly idle at a low aggregate `--rate`. Measures memory and CPU per
+   connection at scale.
+* *Transports*: `tcp`, `udp`, `ws` (WebSocket client handshake, masked binary
+   messages), `unix`.
+* *Payloads*: `fixed:N` or `uniform:A:B` bytes, filled from a pre-generated pool
+  (no per-message generation cost).
+* *Latency*: one HDR-style log-linear histogram per thread (3 significant
+  digits, 1 ns to 100 s), merged at the end; quantiles p50 to p99.99 and max.
+  Timestamps are `CLOCK_MONOTONIC` and travel in the frame (`ts_ns`), so the
+  generator needs no per-message state to compute round trips.
+* *Integrity*: every reply is checked against the protocol's sequence rules;
+  violations are counted by kind and fail the run.
+* *Self-check*: the generator measures its own threads' busy ratio and, in
+  open-loop mode, its send lag. A run is marked *invalid* (`valid: false`,
+  with reasons) when a thread was busy more than 90 % of the time or the
+  achieved rate fell more than 1 % short of the target: the numbers would
+  describe the generator, not the server. The benchmarking framework refuses
+  invalid runs as baselines and flags them in reports.
+* *Warm-up*: with `--warmup S`, the first S seconds are excluded from rates and
+  histograms (connection ramp, cache warm-up); the summary covers the steady
+  window only.
+
+[[loadgen-cli]]
+== Command line (Contract)
+
+[cols="2,2,5",options="header"]
+|===
+| Flag | Default | Meaning
+| `--target HOST:PORT`  | `127.0.0.1:7200` | Server address (resolved once).
+| `--transport T`       | `tcp`            | `tcp`, `udp`, `ws`, `unix`.
+| `--mode M`            | `closed-loop`    | `closed-loop`, `open-loop`, `churn`, `idle-fanout`.
+| `--type T`            | `data`           | `data` (sink), `echo`, `req`.
+| `--connections N`     | `1`              | Connections in total, spread over the threads.
+| `--threads N`         | `1`              | Generator threads.
+| `--rate R`            | `0`              | Messages/s in total (open loop, fan-out); 0 = closed loop.
+| `--payload D`         | `fixed:200`      | Payload size distribution: `fixed:N`, `uniform:A:B`.
+| `--aux N`             | `64`             | Response payload size for `--type req`.
+| `--batch N`           | `64`             | Messages per write; closed loop: also the pipeline depth for echo/req.
+| `--count N`           | `1000000`        | Messages per connection; 0 = unlimited.
+| `--duration S`        | `0`              | Stop after S seconds; 0 = unlimited. The first of count/duration ends the run.
+| `--warmup S`          | `0`              | Seconds excluded from the summary.
+| `--metrics-port N`    | `0`              | Serve `loadgen_*` metrics; 0 = off.
+| `--linger S`          | `0`              | Keep serving metrics S seconds after the run (Kubernetes Jobs, final scrape).
+| `--connect-timeout S` | `10`             | Retry connecting for S seconds.
+| `--instance N`        | `0`              | Instance index (Kubernetes Indexed Job), recorded in the summary.
+| `--scenario NAME`     | (empty)          | Scenario name, recorded in the summary.
+| `--output FILE`       | stdout           | Where the JSON summary goes.
+| `--capabilities`      |                  | Print the capability report and exit.
+| `--version`           |                  | Print the version and exit.
+|===
+
+Exit codes: 0 clean run; 1 usage or setup error (including a value this
+implementation does not support); 2 the run happened but is not clean (nothing
+sent, I/O errors, integrity violations).
+
+[[loadgen-capabilities]]
+== Capability report (Contract)
+
+`--capabilities` prints what the implementation supports. The benchmarking
+framework uses it to skip scenarios a generator cannot run, instead of failing
+them. Phase 1:
+
+[source,json]
+----
+{"schema":"loadgen-capabilities/1","transports":["tcp"],"modes":["closed-loop"],
+ "types":["data","echo","req"],"payload":["fixed"],"max_connections":1,"max_threads":1,
+ "latency":false,"rate":false,"warmup":false,"metrics":true,"self_check":false}
+----
+
+[[loadgen-output]]
+== Run summary (Contract)
+
+One JSON object per run, schema `contract/loadgen-summary.schema.json`
+(`loadgen-summary/1`). Fields an implementation cannot measure are `null`,
+never omitted. Example (Phase 1, echo; latency not measured yet):
+
+[source,json,subs="attributes+"]
+----
+{
+  "schema": "loadgen-summary/1",
+  "tool": {"name": "{project}-loadgen", "version": "0.1.0", "revision": "unknown"},
+  "scenario": "helm-test", "instance": 0,
+  "config": {"target": "{project}-server:7200", "transport": "tcp", "mode": "closed-loop", "type": "echo",
+             "connections": 1, "threads": 1, "payload": "fixed:200", "batch": 64, "count": 10000,
+             "duration_s": 0, "rate": 0},
+  "valid": true, "invalid_reasons": [], "self_check": "not-implemented",
+  "start_unix_s": 1792070541.197, "elapsed_s": 0.002408,
+  "sent": {"messages": 10000, "bytes": 2320000}, "received": {"messages": 10000, "bytes": 2320000},
+  "throughput": {"messages_per_s": 4152432.5, "bytes_per_s": 963364334.0},
+  "latency_ns": null,
+  "integrity": {"missing": 0, "duplicate": 0, "out_of_order": 0, "corrupt": 0},
+  "errors": {"connect": 0, "io": 0},
+  "resources": {"cpu_user_s": 0.010, "cpu_sys_s": 0.004, "max_rss_kib": 15780}
+}
+----
+
+With latency measured, `latency_ns` holds `count`, `mean`, `p50`, `p90`, `p99`,
+`p999`, `p9999` and `max`; churn runs add `throughput.connections_per_s`.
+
+== Metrics
+
+`loadgen_*` families (<<metrics>>) on `--metrics-port`: messages and bytes in
+both directions, connections, connect errors, integrity errors, round-trip and
+send-lag histograms, target rate and per-thread busy ratio. The dashboard plots
+them next to the server's figures (pipeline row) so a gap between "sent" and
+"received" shows where messages queue.
+
+[[loadgen-phase1]]
+== Phase 1 implementation
+
+One thread, one TCP connection, closed loop, fixed payloads: it sends `--count`
+frames (or for `--duration`) in batches of `--batch` and, for echo/req, reads
+each batch's replies before sending the next, checking sequence numbers and
+reply sizes. No latency histogram, rate control or self-check
+(`self_check: "not-implemented"`). Every other contract flag is accepted and
+rejected with exit code 1 if its value is unsupported. That is enough to drive
+the functional tests, the benchmarking framework (smoke scenarios), the Helm
+test and the Kubernetes benchmark path end to end.

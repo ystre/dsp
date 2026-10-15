@@ -1,0 +1,24 @@
+# WebSocket (RFC 6455, binary messages carrying protocol frames). Needs the
+# Phase 2 load generator and server (milestone M4).
+
+[[scenario]]
+name        = "ws-throughput-512B"
+description = "WebSocket sink, 512 B frames, 64 connections; compare with throughput-512B for the framing cost."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+transport   = "ws"
+payload     = "fixed:512"
+connections = 64
+threads     = 8
+batch       = 64
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.messages_per_s" = 0.05

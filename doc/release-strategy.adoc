@@ -1,0 +1,43 @@
+[[release]]
+= Release strategy
+
+The approach is baldr-cpp's.
+
+== Versioning
+
+Semantic versioning (`MAJOR.MINOR.PATCH`) in the root `VERSION` file.
+`VERSION` always means "the next release, if one were cut now". Bump it with
+`tools/bump-version.sh [major|minor|patch|auto]`, which also updates every
+chart's `version`/`appVersion` and the umbrella's dependency pins
+(`tools/sync-version.sh`). `auto` reads the latest commit message (Conventional
+Commits):
+
+* `!` after the type, or a `BREAKING CHANGE` footer: major;
+* `feat:`: minor;
+* anything else: patch.
+
+== Release-relevant changes
+
+A change needs a version bump if it changes what ships. These paths are listed
+once in `tools/release-paths.sh`:
+
+* the components (`libproto`, `libadmin`, `server`, `loadgen`);
+* the build (`cmake`, `CMakeLists.txt`, `conanfile.py`, `dependencies.cmake`,
+  `settings.cmake`, `project.env`);
+* the contracts (`contract`);
+* the charts (`deploy/helm`);
+* the CSAR sources (`csar`);
+* the runtime image (`env/runtime.Dockerfile`).
+
+Documentation, tests, tools, CI and benchmark scenarios are not
+release-relevant. `ci/check-version-bump.sh` (pre-checks) fails a branch that
+changes a release-relevant path without bumping `VERSION`.
+
+== Cutting a release
+
+Releases are on demand. `ci/tag-release.sh` creates the annotated tag
+`v<VERSION>` on the chosen commit. It refuses if the tag exists, or if nothing
+release-relevant changed since the previous tag (`--force` overrides that).
+`--push` pushes the tag; `--check` only reports. The pipeline
+(`ci/e2e.sh`) on the tagged commit produces the artifacts of <<packaging>>.
+Every release adds an entry to `csar/Files/ChangeLog.txt`.

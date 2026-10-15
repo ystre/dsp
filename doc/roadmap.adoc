@@ -1,0 +1,27 @@
+[[roadmap]]
+= Roadmap
+
+Phase 2 implements the server and the load generator milestone by milestone.
+Each milestone ends with its scenarios running in the benchmarking framework,
+the results in <<performance>>, and the contracts unchanged (or changed on
+purpose, contract first).
+
+[cols="1,4,3",options="header"]
+|===
+| Milestone | Content | Exit criteria (scenarios)
+| L1 | Load generator: threads × connections, open and closed loop, HDR latency, integrity, self-check, warm-up, capability report. Comes first, so that every server milestone is measured. | `run.py --list` shows all TCP scenarios runnable; the generator saturates the Phase 1 server on loopback without self-check failures.
+| M1 | Server core: configuration, reactors (pinning, SO_REUSEPORT, CBPF steering), epoll backend, pools, send queues, backpressure, timing wheel, metric shards, built-in handlers, graceful shutdown. | `throughput-*`, `latency-echo-*`, `churn`, `conn-scale-100k`; the metrics contract fully exported.
+| M2 | io_uring backend: multishot accept/recv, provided buffer rings, bundles, SEND_ZC, DEFER_TASKRUN, optional NAPI busy polling. | Same scenarios, epoll vs io_uring side by side; open questions of <<arch-open>> answered.
+| M3 | UDP transport (GRO/GSO, multishot recvmsg) in the server and the generator. | `udp-pps-64B`, `udp-echo-1m`.
+| M4 | WebSocket codec (server and generator). | `ws-throughput-512B`.
+| M5 | TLS with kTLS offload. | TLS variants of throughput and latency scenarios.
+| M6 | Tuning and the two-host reference results; Kubernetes tuning profile (static CPU manager, hostNetwork) measured; zcrx evaluation. | Performance chapter with reference numbers; CI perf gate on a dedicated runner.
+|===
+
+Later, driven by use cases:
+
+* Northbound sinks (Kafka) for data-stream processing, as in the first-generation
+  DSP prototype. The platform already runs a shared Kafka cluster and
+  releases declare their topics (placeholder `data`).
+* Unix-socket and AF_XDP transports.
+* Outbound connections from handlers, for proxy-like applications.

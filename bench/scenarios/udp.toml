@@ -1,0 +1,46 @@
+# UDP packet rate. Needs the Phase 2 load generator and server (milestone M3).
+
+[[scenario]]
+name        = "udp-pps-64B"
+description = "UDP sink, 64 B datagrams, 8 sender threads."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+transport   = "udp"
+payload     = "fixed:64"
+connections = 8
+threads     = 8
+batch       = 64
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.messages_per_s" = 0.05
+
+[[scenario]]
+name        = "udp-echo-1m"
+description = "UDP echo, 200 B, open loop at 1M datagrams/s."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "echo"
+transport   = "udp"
+mode        = "open-loop"
+rate        = 1_000_000
+payload     = "fixed:200"
+connections = 8
+threads     = 8
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"latency_ns.p99" = 0.10

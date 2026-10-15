@@ -1,0 +1,110 @@
+# Maximum throughput (closed loop, sink): how many messages/bytes per second the
+# server absorbs, and at what CPU cost per message. Swept over message sizes.
+# Needs the Phase 2 load generator (multiple connections and threads).
+
+[[scenario]]
+name        = "throughput-64B"
+description = "Sink, 64 B payloads, 64 connections on 8 threads, pipeline 64."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+payload     = "fixed:64"
+connections = 64
+threads     = 8
+batch       = 64
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.messages_per_s" = 0.05
+"server.ns_per_message"     = 0.05
+
+[[scenario]]
+name        = "throughput-512B"
+description = "Sink, 512 B payloads."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+payload     = "fixed:512"
+connections = 64
+threads     = 8
+batch       = 64
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.messages_per_s" = 0.05
+"server.ns_per_message"     = 0.05
+
+[[scenario]]
+name        = "throughput-4KiB"
+description = "Sink, 4 KiB payloads (bandwidth bound)."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+payload     = "fixed:4096"
+connections = 64
+threads     = 8
+batch       = 16
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.bytes_per_s" = 0.05
+
+[[scenario]]
+name        = "throughput-64KiB"
+description = "Sink, 64 KiB payloads (copy and zero-copy paths)."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+payload     = "fixed:65536"
+connections = 16
+threads     = 8
+batch       = 4
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.bytes_per_s" = 0.05
+
+[[scenario]]
+name        = "throughput-mixed"
+description = "Sink, payloads uniformly 64 B .. 4 KiB."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "data"
+payload     = "uniform:64:4096"
+connections = 64
+threads     = 8
+batch       = 32
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.bytes_per_s" = 0.05

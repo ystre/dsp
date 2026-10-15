@@ -1,0 +1,83 @@
+# Dependencies chart values (doc/deployment.adoc, "Dependencies chart").
+#
+# The platform: cluster-wide operators and the shared observability stack,
+# installed once per cluster (deploy/lab/platform.sh), never per release. On a
+# cluster that already runs Prometheus/Grafana or Strimzi, disable the
+# corresponding subchart: CRDs are cluster-scoped and owned by exactly one Helm
+# release. Per-release resources (the server's monitors, a Kafka cluster) live
+# in the integration chart.
+
+# ------------------------------------------------------------------------------
+# Observability: Prometheus Operator, Prometheus, Grafana, node-exporter,
+# kube-state-metrics. Tuned for a single-node benchmark lab (values from o1).
+# ------------------------------------------------------------------------------
+kube-prometheus-stack:
+  enabled: true
+  alertmanager:
+    enabled: false
+  # k3s embeds these components; they cannot be scraped and would only show up as "down".
+  kubeEtcd:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      # Benchmark runs last minutes; a 5 s scrape keeps enough points per run.
+      scrapeInterval: 5s
+      evaluationInterval: 15s
+      retention: 2d
+      retentionSize: 5GB
+      # Pick up PodMonitors/ServiceMonitors/rules from every namespace, regardless of Helm labels.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+  prometheus-node-exporter:
+    extraArgs:
+      # TCP/UDP counters used by the dashboard's "Node" row.
+      - --collector.netstat.fields=^(.*_(InErrors|InErrs|RcvbufErrors|SndbufErrors)|Tcp_(ActiveOpens|PassiveOpens|RetransSegs|CurrEstab)|TcpExt_(Listen.*|Syncookies.*|TCPTimeouts)|Udp(6)?_(InDatagrams|OutDatagrams|NoPorts))$
+  grafana:
+    adminUser: admin
+    adminPassword: lab
+    service:
+      type: NodePort
+      nodePort: 30300
+    grafana.ini:
+      auth.anonymous:
+        enabled: true
+        org_role: Viewer
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        labelValue: "1"
+        searchNamespace: ALL
+        folderAnnotation: grafana_folder
+        provider:
+          foldersFromFilesStructure: true
+
+# ------------------------------------------------------------------------------
+# Kafka: the Strimzi operator (watching every namespace, so a release can also
+# have a dedicated cluster: the integration chart's `kafka` component) and the
+# shared Kafka cluster. Releases declare their topics on it (KafkaTopic in this
+# namespace, names prefixed per release namespace; the integration chart's
+# `topics`).
+# ------------------------------------------------------------------------------
+strimzi-kafka-operator:
+  enabled: true
+  watchAnyNamespace: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+
+# The shared cluster (deploy/helm/kafka; every option of its values.yaml).
+kafka:
+  enabled: true

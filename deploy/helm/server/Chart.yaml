@@ -1,0 +1,8 @@
+apiVersion: v2
+name: dsp-server
+description: High-performance network server (TCP first; UDP and WebSocket ready), with its monitoring resources.
+type: application
+# Kept equal to the root VERSION file (tools/bump-version.sh, ci/pre-checks.sh).
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [networking, tcp, udp, websocket, io_uring]

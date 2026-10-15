@@ -1,0 +1,43 @@
+{{- /*
+Kafka topics of the release, as Strimzi KafkaTopics in the namespace of the
+cluster they belong to (the topic operator watches only there): the shared
+cluster of the platform, or the dedicated one (`kafka.enabled`).
+*/ -}}
+{{- if .Values.topics.enabled }}
+{{- $t := .Values.topics }}
+{{- $dedicated := .Values.kafka.enabled }}
+{{- $namespace := ternary .Release.Namespace $t.clusterNamespace $dedicated }}
+{{- $cluster := ternary (.Values.kafka.name | default "kafka") $t.cluster $dedicated }}
+{{- $prefix := $t.prefix | default (printf "%s." .Release.Namespace) }}
+{{- range $t.items }}
+{{- $topic := printf "%s%s" $prefix .name }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: {{ $topic | lower | replace "_" "-" }}
+  namespace: {{ $namespace }}
+  labels:
+    strimzi.io/cluster: {{ $cluster }}
+    app.kubernetes.io/name: {{ $.Chart.Name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: kafka-topic
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    # The namespace of the release that owns the topic (it lives in the cluster's namespace).
+    owner-namespace: {{ $.Release.Namespace }}
+    {{- with $t.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    # Topics outlive the release; deploy/lab/down.sh --delete-topics removes them.
+    helm.sh/resource-policy: keep
+spec:
+  topicName: {{ $topic }}
+  partitions: {{ .partitions }}
+  replicas: {{ .replicas }}
+  {{- with .config }}
+  config:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

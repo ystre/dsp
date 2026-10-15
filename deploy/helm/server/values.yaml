@@ -1,0 +1,175 @@
+# Server chart values. Every key is documented in doc/deployment.adoc and
+# validated by values.schema.json.
+
+global:
+  # Set by the umbrella chart; override image.repository / image.tag when set.
+  image:
+    repository: ""
+    tag: ""
+
+nameOverride: ""
+# Resource names are "<release>-server" unless overridden.
+fullnameOverride: ""
+
+image:
+  repository: localhost:5000/dsp
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Executables inside the image (named after project.env).
+binaries:
+  server: dsp-server
+  loadgen: dsp-loadgen
+
+# Metric name prefix (project.env METRIC_PREFIX), used by the PrometheusRule.
+metricPrefix: dsp
+
+workload:
+  # Deployment, or StatefulSet for stable per-pod DNS names (headless Service).
+  kind: Deployment
+  replicas: 1
+  # Seconds for graceful shutdown: stop accepting, drain, close.
+  terminationGracePeriodSeconds: 30
+  podManagementPolicy: Parallel   # StatefulSet only
+
+ports:
+  tcp:
+    enabled: true
+    port: 7200
+  # UDP and WebSocket listeners arrive with milestones M3 and M4 (doc/roadmap.adoc).
+  udp:
+    enabled: false
+    port: 7201
+  ws:
+    enabled: false
+    port: 7280
+  admin:
+    port: 9555
+
+# Extra command-line arguments for the server.
+extraArgs: []
+extraEnv: []
+
+# Server configuration file (doc/architecture.adoc, "Configuration"). Phase 2:
+# the Phase 1 server takes command-line arguments only, so this stays disabled.
+config:
+  enabled: false
+  mountPath: /etc/server
+  content: {}
+
+service:
+  type: ClusterIP
+  annotations: {}
+  # For NodePort / LoadBalancer: preserve client addresses and avoid a second hop.
+  externalTrafficPolicy: ""
+  nodePorts:
+    tcp: null
+    udp: null
+    ws: null
+  # Headless Service for direct pod addressing (always created for StatefulSets).
+  headless: false
+
+# Performance knobs (doc/deployment.adoc, "Performance tuning on Kubernetes").
+performance:
+  # Bypass the pod network (veth, iptables/eBPF NAT): the server binds on the node's interfaces.
+  hostNetwork: false
+  # Requests = limits for CPU and memory: Guaranteed QoS. With integer CPU requests and the
+  # kubelet's static CPU manager, the pod gets exclusive cores for its reactors.
+  guaranteedQoS: false
+  # Namespaced sysctls. "Safe" ones are always allowed; others need the kubelet
+  # --allowed-unsafe-sysctls flag (e.g. net.core.somaxconn).
+  sysctls: []
+  #  - name: net.ipv4.ip_local_port_range
+  #    value: "1024 65535"
+  # 2 MiB huge pages for buffer pools (request and limit, e.g. "1Gi"); empty = none.
+  hugepages2Mi: ""
+  runtimeClassName: ""
+  priorityClassName: ""
+
+# No CPU limit by default: CFS throttling distorts latency measurements (o1 finding).
+resources:
+  requests:
+    cpu: "1"
+    memory: 128Mi
+  limits:
+    memory: 1Gi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+probes:
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 2
+    failureThreshold: 2
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automount: false
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+
+networkPolicy:
+  enabled: false
+  # Peers allowed to reach the data ports; empty = everyone.
+  dataFrom: []
+  # Peers allowed to reach the admin port: Prometheus, in the platform namespace of
+  # deploy/lab/platform.sh (kubelet probes do not need a rule).
+  adminFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform
+
+monitoring:
+  podMonitor:
+    enabled: true
+    interval: 5s
+    # Extra labels, e.g. to match a Prometheus podMonitorSelector.
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+  dashboard:
+    enabled: true
+    # Label the Grafana dashboard sidecar watches.
+    label: grafana_dashboard
+    labelValue: "1"
+    folder: ""
+    # Namespace of the ConfigMap; empty = the release namespace.
+    namespace: ""
+
+# `helm test`: a short echo run of the load generator against the Service.
+tests:
+  enabled: true
+  count: 10000

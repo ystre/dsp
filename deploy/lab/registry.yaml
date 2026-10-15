@@ -1,0 +1,60 @@
+# Local OCI registry for images built on the host (from the o1 lab).
+# Namespace `registry` must exist (deploy/lab/platform.sh creates it).
+#
+# hostNetwork makes it reachable as localhost:5000 both from the host's Docker daemon (push) and
+# from k3s' containerd (pull). Both treat `localhost` registries as plain HTTP, so no TLS or
+# /etc/rancher/k3s/registries.yaml changes (which would need root) are required.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: registry
+          image: registry:2
+          env:
+            - name: REGISTRY_HTTP_ADDR
+              value: "127.0.0.1:5000"
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /v2/
+              port: 5000
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: registry-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: registry
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi

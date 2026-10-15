@@ -1,0 +1,52 @@
+[[performance]]
+= Performance
+
+== Phase 1: pipeline validation
+
+Phase 1 has no real server yet. The numbers below come from the hello-world
+binaries: one thread, `poll()`, one connection, closed loop. They show that the
+benchmarking pipeline works end to end (scenario, runner, load generator,
+server metrics, CPU accounting, comparison, report). They are *not* a statement
+about the design's performance. Phase 2 milestones replace this chapter's
+content with measured results of the real server (<<roadmap>>).
+
+Two observations are useful anyway:
+
+* A single connection with 64 frames per write already moves ~24 M sink
+  messages/s on loopback. The hello world's per-message cost is tiny because one
+  `recv` carries ~280 frames (64 KiB buffer). Batching, not per-message code,
+  dominates, which is the premise of <<arch-performance-model>>.
+* Echo is 5× slower than sink, because the hello-world generator waits for each
+  batch's replies before sending the next one (pipeline depth 64, one round trip
+  per batch). The Phase 2 generator keeps the pipeline full.
+
+include::results/phase1-local.adoc[]
+
+The short smoke runs (~0.1 s) explain the spread of the sink figures; Phase 2
+scenarios run for a fixed duration with a warm-up.
+
+include::results/phase1-k8s.adoc[]
+
+On Kubernetes, the server ran as a pod with the chart's defaults (no
+`hostNetwork`, no CPU limit) and the generator as a Job on the same k3s node
+(pod network over veth/flannel). The runner does not collect CPU or RSS on this
+target; the dashboard shows the container's CPU.
+
+== Micro-benchmarks
+
+`bench-libproto` (Zen 5, release build, median of 3): frame header encode and
+decode ≈ 7 ns per frame (≈ 144 M frames/s per core). This is the baseline in
+`bench/baselines/micro/`.
+
+== Reproduce
+
+[source,sh]
+----
+tools/configure.sh build/release Release && cmake --build build/release
+for s in smoke smoke-echo; do
+    python3 -I tools/bench/run.py --scenario $s --bin-dir build/release/bin
+done
+deploy/lab/up.sh
+python3 -I tools/bench/run.py --target k8s --scenario smoke --repeat 2 --bin-dir build/release/bin
+python3 -I tools/bench/report.py results/<run>... --output doc/results/<name>.adoc
+----

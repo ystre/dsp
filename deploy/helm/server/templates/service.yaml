@@ -1,0 +1,68 @@
+{{- define "server.servicePorts" -}}
+{{- if .Values.ports.tcp.enabled }}
+- name: tcp
+  port: {{ .Values.ports.tcp.port }}
+  targetPort: tcp
+  protocol: TCP
+  {{- if and .nodePorts .Values.service.nodePorts.tcp }}
+  nodePort: {{ .Values.service.nodePorts.tcp }}
+  {{- end }}
+{{- end }}
+{{- if .Values.ports.udp.enabled }}
+- name: udp
+  port: {{ .Values.ports.udp.port }}
+  targetPort: udp
+  protocol: UDP
+  {{- if and .nodePorts .Values.service.nodePorts.udp }}
+  nodePort: {{ .Values.service.nodePorts.udp }}
+  {{- end }}
+{{- end }}
+{{- if .Values.ports.ws.enabled }}
+- name: ws
+  port: {{ .Values.ports.ws.port }}
+  targetPort: ws
+  protocol: TCP
+  {{- if and .nodePorts .Values.service.nodePorts.ws }}
+  nodePort: {{ .Values.service.nodePorts.ws }}
+  {{- end }}
+{{- end }}
+- name: admin
+  port: {{ .Values.ports.admin.port }}
+  targetPort: admin
+  protocol: TCP
+{{- end -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "server.fullname" . }}
+  labels:
+    {{- include "server.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if .Values.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "server.selectorLabels" . | nindent 4 }}
+  ports:
+    {{- include "server.servicePorts" (merge (dict "nodePorts" (ne .Values.service.type "ClusterIP")) .) | trim | nindent 4 }}
+{{- if or .Values.service.headless (eq .Values.workload.kind "StatefulSet") }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "server.fullname" . }}-headless
+  labels:
+    {{- include "server.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    {{- include "server.selectorLabels" . | nindent 4 }}
+  ports:
+    {{- include "server.servicePorts" (merge (dict "nodePorts" false) .) | trim | nindent 4 }}
+{{- end }}

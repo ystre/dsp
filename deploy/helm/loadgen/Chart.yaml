@@ -1,0 +1,7 @@
+apiVersion: v2
+name: dsp-loadgen
+description: Load generator run as an indexed Kubernetes Job (one benchmark run per release).
+type: application
+# Kept equal to the root VERSION file (tools/bump-version.sh, ci/pre-checks.sh).
+version: 0.1.0
+appVersion: "0.1.0"

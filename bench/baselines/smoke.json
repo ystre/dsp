@@ -1,0 +1,138 @@
+{
+  "schema": "bench-result/1",
+  "run_id": "phase1-smoke-local",
+  "target": "local",
+  "scenario": {
+    "description": "One connection, closed loop, 200 B sink messages. Pipeline check, not a performance number.",
+    "count": 2000000,
+    "duration_s": 0,
+    "warmup_s": 0,
+    "repeat": 3,
+    "server_args": [],
+    "thresholds": {
+      "throughput.messages_per_s": 0.3
+    },
+    "name": "smoke",
+    "loadgen": {
+      "transport": "tcp",
+      "mode": "closed-loop",
+      "type": "data",
+      "connections": 1,
+      "threads": 1,
+      "rate": 0,
+      "payload": "fixed:200",
+      "aux": 64,
+      "batch": 64
+    },
+    "local": {
+      "server_cpus": "2",
+      "loadgen_cpus": "4"
+    },
+    "file": "bench/scenarios/smoke.toml"
+  },
+  "loadgen_capabilities": {
+    "schema": "loadgen-capabilities/1",
+    "transports": [
+      "tcp"
+    ],
+    "modes": [
+      "closed-loop"
+    ],
+    "types": [
+      "data",
+      "echo",
+      "req"
+    ],
+    "payload": [
+      "fixed"
+    ],
+    "max_connections": 1,
+    "max_threads": 1,
+    "latency": false,
+    "rate": false,
+    "metrics": true,
+    "self_check": false
+  },
+  "env": {
+    "hostname": "gkd-mtuf",
+    "kernel": "7.1.13-2-MANJARO",
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "revision": null,
+    "dirty": true
+  },
+  "valid": true,
+  "clean": true,
+  "figures": {
+    "throughput.messages_per_s": 23926734.9,
+    "throughput.bytes_per_s": 5551002497.3,
+    "throughput.connections_per_s": null,
+    "latency_ns.p50": null,
+    "latency_ns.p99": null,
+    "latency_ns.p999": null,
+    "latency_ns.p9999": null,
+    "latency_ns.max": null,
+    "server.ns_per_message": 26.997061500000004,
+    "server.cpu_cores": 0.645708471525643,
+    "server.max_rss_kib": 3580
+  },
+  "spread": {
+    "throughput.messages_per_s": 0.15852165018972147,
+    "throughput.bytes_per_s": 0.1585216500133098,
+    "server.ns_per_message": 0.19143059328882853,
+    "server.cpu_cores": 0.0124977614686137,
+    "server.max_rss_kib": 0.035632183908045977
+  },
+  "repeats": [
+    {
+      "figures": {
+        "throughput.messages_per_s": 20223321.7,
+        "throughput.bytes_per_s": 4691810632.6,
+        "throughput.connections_per_s": null,
+        "server.messages": 2000000.0,
+        "server.cpu_s": 0.06385798499999999,
+        "server.cpu_cores": 0.645708471525643,
+        "server.ns_per_message": 31.928992499999996,
+        "server.max_rss_kib": 3580
+      },
+      "valid": true,
+      "invalid_reasons": [],
+      "clean": true,
+      "loadgen_exit": 0,
+      "elapsed_s": 0.098896
+    },
+    {
+      "figures": {
+        "throughput.messages_per_s": 24016227.2,
+        "throughput.bytes_per_s": 5571764707.7,
+        "throughput.connections_per_s": null,
+        "server.messages": 2000000.0,
+        "server.cpu_s": 0.053994123000000005,
+        "server.cpu_cores": 0.6483677726142872,
+        "server.ns_per_message": 26.997061500000004,
+        "server.max_rss_kib": 3456
+      },
+      "valid": true,
+      "invalid_reasons": [],
+      "clean": true,
+      "loadgen_exit": 0,
+      "elapsed_s": 0.083277
+    },
+    {
+      "figures": {
+        "throughput.messages_per_s": 23926734.9,
+        "throughput.bytes_per_s": 5551002497.3,
+        "throughput.connections_per_s": null,
+        "server.messages": 2000000.0,
+        "server.cpu_s": 0.053521858000000005,
+        "server.cpu_cores": 0.6402978621588966,
+        "server.ns_per_message": 26.760929000000004,
+        "server.max_rss_kib": 3480
+      },
+      "valid": true,
+      "invalid_reasons": [],
+      "clean": true,
+      "loadgen_exit": 0,
+      "elapsed_s": 0.083589
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+Platform installed in {{ .Release.Namespace }}:
+{{- if index .Values "kube-prometheus-stack" "enabled" }}
+  * kube-prometheus-stack: Prometheus (monitors and rules from every namespace), Grafana on NodePort {{ index .Values "kube-prometheus-stack" "grafana" "service" "nodePort" }} (anonymous viewer)
+{{- end }}
+{{- if index .Values "strimzi-kafka-operator" "enabled" }}
+  * Strimzi operator ({{ if index .Values "strimzi-kafka-operator" "watchAnyNamespace" }}watches every namespace{{ else }}watches {{ .Release.Namespace }} only{{ end }})
+{{- end }}
+{{- if .Values.kafka.enabled }}
+  * shared Kafka cluster "{{ .Values.kafka.name }}": {{ .Values.kafka.name }}-kafka-bootstrap.{{ .Release.Namespace }}.svc:9092 (topics: KafkaTopic in {{ .Release.Namespace }})
+{{- end }}

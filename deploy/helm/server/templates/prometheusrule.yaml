@@ -1,0 +1,61 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $p := .Values.metricPrefix }}
+{{- $sel := printf "namespace=\"%s\", pod=~\"%s-.*\"" .Release.Namespace (include "server.fullname" .) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "server.fullname" . }}
+  labels:
+    {{- include "server.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: {{ include "server.fullname" . }}.recording
+      interval: 15s
+      rules:
+        - record: {{ $p }}:rx_messages:rate1m
+          expr: sum by (namespace, pod) (rate({{ $p }}_rx_messages_total{ {{- $sel -}} }[1m]))
+        - record: {{ $p }}:rx_bytes:rate1m
+          expr: sum by (namespace, pod) (rate({{ $p }}_rx_bytes_total{ {{- $sel -}} }[1m]))
+        - record: {{ $p }}:reactor_utilisation:rate1m
+          expr: sum by (namespace, pod, reactor) (rate({{ $p }}_loop_busy_seconds_total{ {{- $sel -}} }[1m]))
+    - name: {{ include "server.fullname" . }}.alerts
+      rules:
+        - alert: ServerDown
+          expr: absent(up{ {{- $sel -}} } == 1)
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: No server pod of {{ include "server.fullname" . }} is being scraped successfully.
+        - alert: ServerReactorSaturated
+          expr: max by (namespace, pod, reactor) (rate({{ $p }}_loop_busy_seconds_total{ {{- $sel -}} }[5m])) > 0.95
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Reactor {{ "{{ $labels.reactor }}" }} of {{ "{{ $labels.pod }}" }} has been more than 95 % busy for 10 minutes.
+        - alert: ServerProtocolErrors
+          expr: sum by (namespace, pod, reason) (rate({{ $p }}_protocol_errors_total{ {{- $sel -}} }[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Clients are sending malformed frames ({{ "{{ $labels.reason }}" }}).
+        - alert: ServerRejectingConnections
+          expr: sum by (namespace, pod, reason) (rate({{ $p }}_connections_rejected_total{ {{- $sel -}} }[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Connections are being rejected ({{ "{{ $labels.reason }}" }}).
+        - alert: ServerBackpressure
+          expr: sum by (namespace, pod) (rate({{ $p }}_backpressure_seconds_total{ {{- $sel -}} }[5m])) > 1
+          for: 10m
+          labels:
+            severity: info
+          annotations:
+            summary: Peers are not reading replies fast enough; reads are paused on average on more than one connection.
+{{- end }}

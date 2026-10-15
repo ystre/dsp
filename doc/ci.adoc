@@ -1,0 +1,99 @@
+[[ci]]
+= CI pipeline
+
+== Principles
+
+* *The scripts are the pipeline.* Every stage is a shell script in `ci/`;
+  a CI service only calls them. The same pipeline runs on a laptop, in the build
+  container and on any CI system (GitHub Actions is a thin wrapper).
+  `ci/lib.sh` holds what every stage shares. Once a stage grows beyond a
+  sequence of steps, its parts move into sourced modules under
+  `ci/<stage>/`, so the stage script stays a readable outline; for example,
+  `ci/deploy-test/topics.sh` holds the deploy test's Kafka topic retention.
+* *Clean by construction.* `ci/e2e.sh` copies the repository (tracked and new
+  files, git metadata; nothing ignored) into a fresh, timestamped workspace and
+  runs every stage there. Stages never clean up after a previous run; they
+  assume a clean workspace.
+* *Same tools everywhere.* `ci/in-container.sh` runs any command inside the
+  build image (`env/build.Dockerfile`), where every tool is required
+  (`CI_STRICT_TOOLS=1`). On a developer host, a missing optional tool
+  (shellcheck, asciidoctor, docker) skips its check with a warning.
+
+== Running
+
+[source,sh]
+----
+ci/e2e.sh                                 # everything, in /tmp/workspace/<project>/<timestamp>
+ci/run.sh build unit-test function-test   # selected stages, in the repository (developer loop)
+ci/in-container.sh ci/e2e.sh              # everything, inside the build image
+CI_DEPLOY=1 ci/e2e.sh                     # ... including the Kubernetes deploy test
+tools/workspace-usage.sh                  # space taken by the accumulated e2e workspaces
+----
+
+[[ci-stages]]
+== Stages
+
+[cols="2,6",options="header"]
+|===
+| Stage | What it does
+| `prepare` | Clean copy into the workspace; refuses an existing workspace. Third-party chart archives are carried over, so the chart stage works offline.
+| `pre-checks` | Version bump (`check-version-bump.sh`), chart versions match `VERSION` (`tools/sync-version.sh --check`), project name only where allowed (`tools/rename.sh --check`), clang-format, shellcheck, Python compiles, lint of the charts without dependencies.
+| `build` | Debug build with ASan + UBSan.
+| `unit-test` | ctest (GoogleTest, `*.test.cpp`).
+| `function-test` | `tests/run.sh` against the sanitizer build: end-to-end message accounting, metrics contract, protocol errors.
+| `build-release` | Optimised build (`-O3 -march=x86-64-v3`, static libstdc++, debug info kept for splitting).
+| `micro-bench` | Every `bench-*` with repetitions; compared with `bench/baselines/micro/` (warning only unless `CI_PERF_GATE=1`).
+| `perf-smoke` | `tools/bench/run.py --scenario smoke` on the release build; compared with `bench/baselines/smoke.json`; AsciiDoc report in the result directory.
+| `image` | Runtime image (`env/runtime.Dockerfile`, distroless) with the release binaries; smoke-runs both binaries in it. `IMAGE_PUSH=1` pushes.
+| `chart` | Chart dependencies, strict lint of all charts, rendering with defaults and with every option on (also validates `values.schema.json`), and a negative schema check.
+| `dashboard` | The committed dashboard equals the generator's output and uses contract metrics only.
+| `docs` | The generated metrics table is up to date; the book renders without warnings (`dist/doc/book.html`).
+| `package` | `dist/`: charts, binary and debug-info archives, the CSAR, `SHA256SUMS` (<<packaging>>).
+| `package-test` | Checksums; CSAR validation, unsigned and signed with a throwaway certificate; the binary archive runs.
+| `deploy-test` | Opt-in (`CI_DEPLOY=1`): pushes the image, installs the packaged umbrella chart into its own namespace of the current kube context with the lab's install step (<<deployment-lab>>), `helm test`, the smoke scenario on Kubernetes, uninstall. Needs the platform (`deploy/lab/platform.sh`); never installs it. Its Kafka topics (`<project>-ci.<run id>.<topic>`, label `ci-run`) are deleted after a successful run and kept after a failure; topics kept by earlier runs are listed as a warning (<<deployment-topics>>).
+| `summary` | Lists artifacts and results.
+| `tag-release` | Not part of `e2e.sh` (it only reports `--check`); see <<release>>.
+|===
+
+== Knobs
+
+[cols="2,5",options="header"]
+|===
+| Variable | Effect
+| `WORKSPACE` | Stage working directory. Default: the repository (`ci/run.sh`), or `/tmp/workspace/<project>/<run id>` (`ci/e2e.sh`).
+| `WORKSPACE_ROOT` | Parent of the timestamped e2e workspaces (default `/tmp/workspace/<project>`).
+| `CI_STRICT_TOOLS` | `1`: a missing tool fails the stage (set by `ci/in-container.sh`).
+| `CI_PERF_GATE` | `1`: benchmark regressions fail the pipeline.
+| `CI_MICRO_THRESHOLD` | Relative threshold for micro-benchmarks (default 0.15).
+| `CI_DEPLOY`, `CI_DEPLOY_NAMESPACE`, `CI_DEPLOY_KEEP` | Deploy test: enable, namespace (default `<project>-ci`), keep the release and its topics.
+| `CI_RUN_ID` | Run identifier (default: the UTC start time, `<yyyymmdd>-<hhmmss>Z`): the e2e workspace name and part of the deploy test's topic names.
+| `IMAGE_REPOSITORY`, `IMAGE_PUSH` | Image name (default `localhost:5000/<project>`); push after building.
+| `CSAR_WITH_IMAGES` | `1`: bundle the runtime image in the CSAR.
+| `CI_BASE_REF` | Base for the version-bump check (default `origin/$GITHUB_BASE_REF`, `origin/master`, `master`).
+|===
+
+[[ci-workspaces]]
+== Workspaces
+
+Every `ci/e2e.sh` run gets its own directory, so results and artifacts of
+several runs co-exist and can be compared. `/tmp` is usually a tmpfs, so they
+occupy memory. `tools/workspace-usage.sh` (also printed at the end of
+`e2e.sh`) lists every run with its size and the share of build trees,
+`dist/` and `results/`, the total, and the free space of the filesystem. It
+warns when the workspaces take more than `WARN_PERCENT` (default 25 %) of it.
+It never deletes anything; removing old runs is a deliberate act.
+
+== GitHub Actions
+
+`.github/workflows/ci.yml` runs the stage groups as steps inside the build
+image (`ci/in-container.sh ci/run.sh <stages>`) on the runner's fresh checkout
+and uploads `dist/` and `results/`. Benchmarks on shared runners are noisy, so
+the performance stages warn only. A self-hosted, tuned runner with
+`CI_PERF_GATE=1` is the way to gate on performance. Nothing in `ci/` depends on
+GitHub; another CI system needs the same few lines.
+
+== Adding a stage
+
+Write `ci/<stage>.sh`: source `ci/lib.sh`, call `stage "<Title>"`, work only
+inside `$WORKSPACE`, use `have <tool>` for optional tools, and do not delete
+anything. Then add the stage to `STAGES` in `ci/e2e.sh` and to the workflow.

@@ -1,0 +1,23 @@
+apiVersion: v2
+name: dsp
+description: Integration chart - the server, an optional Kafka cluster and an optional load generator run, in one release.
+type: application
+# Kept equal to the root VERSION file (tools/bump-version.sh, ci/pre-checks.sh).
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: dsp-server
+    alias: server
+    version: 0.1.0
+    repository: file://../server
+    condition: server.enabled
+  - name: dsp-kafka
+    alias: kafka
+    version: 0.1.0
+    repository: file://../kafka
+    condition: kafka.enabled
+  - name: dsp-loadgen
+    alias: loadgen
+    version: 0.1.0
+    repository: file://../loadgen
+    condition: loadgen.enabled

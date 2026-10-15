@@ -1,0 +1,17 @@
+{{- if .Values.monitoring.dashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "server.fullname" . }}-dashboard
+  namespace: {{ default .Release.Namespace .Values.monitoring.dashboard.namespace }}
+  labels:
+    {{- include "server.labels" . | nindent 4 }}
+    {{ .Values.monitoring.dashboard.label }}: {{ .Values.monitoring.dashboard.labelValue | quote }}
+  {{- with .Values.monitoring.dashboard.folder }}
+  annotations:
+    grafana_folder: {{ . | quote }}
+  {{- end }}
+data:
+  server.json: |-
+    {{- .Files.Get "dashboards/server.json" | nindent 4 }}
+{{- end }}

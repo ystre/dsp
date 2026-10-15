@@ -1,0 +1,116 @@
+[[handler-api]]
+= Handler API
+
+The handler is the application: it consumes received data and produces
+replies. The server owns everything else (sockets, buffers, scheduling,
+timeouts, metrics). This chapter defines the interface Phase 2 implements; the
+Phase 1 hello-world server hard-codes the built-in behaviours.
+
+== Model
+
+* A *handler type* is a C++ type satisfying one of the concepts below.
+* One *handler instance* exists per connection (stream transports) or per
+  reactor (datagram transports), created by the reactor that owns the
+  connection; it is only ever called from that reactor's thread, so it needs
+  no synchronisation.
+* *Per-reactor shared state* (caches, routing tables) is reached through the
+  context and is equally single-threaded.
+* Handlers are compiled in. The server is built with a closed set
+  (`handler_set<discard, echo, reqresp, ...>`) and a listener selects one by
+  name; dispatch is a `std::variant` visit resolved at start-up, so calls are
+  direct.
+
+== Stream handlers (bytes)
+
+[source,cpp]
+----
+template <typename H>
+concept stream_handler = requires(H h, connection& c, std::span<const std::byte> in, close_reason r) {
+    { h.on_open(c) }      -> std::same_as<void>;
+    { h.on_data(c, in) }  -> std::same_as<std::size_t>;   // bytes consumed (<= in.size())
+    { h.on_close(c, r) }  -> std::same_as<void>;
+};
+----
+
+`on_data` receives everything received and not yet consumed. Returning fewer
+bytes than `in.size()` keeps the rest for the next call (a partial message);
+the server assembles it with the following data (overflow buffer).
+
+== Frame handlers (messages)
+
+Built on the frame codec (<<protocol>>): the codec splits the stream and calls
+the handler once per frame.
+
+[source,cpp]
+----
+template <typename H>
+concept frame_handler = requires(H h, connection& c, const proto::header& hdr,
+                                 std::span<const std::byte> payload, close_reason r) {
+    { h.on_open(c) }                -> std::same_as<void>;
+    { h.on_frame(c, hdr, payload) } -> std::same_as<void>;
+    { h.on_close(c, r) }            -> std::same_as<void>;
+};
+----
+
+== Datagram handlers
+
+[source,cpp]
+----
+template <typename H>
+concept datagram_handler = requires(H h, datagram_context& d, const peer_address& from,
+                                    std::span<const std::byte> datagram) {
+    { h.on_datagram(d, from, datagram) } -> std::same_as<void>;
+};
+----
+
+Replies go through `d.reply(from, ...)`; the reactor batches them with GSO.
+
+== The connection context
+
+[source,cpp]
+----
+class connection {
+public:
+    // Replies (appended to the send queue, flushed once per loop iteration).
+    void send(std::span<const std::byte> data);          // copies
+    auto reserve(std::size_t n) -> std::span<std::byte>; // write in place ...
+    void commit(std::size_t n);                          // ... then commit what was written
+    void send(owned_buffer buf);                         // hand over (zero-copy for large data)
+
+    // Flow control and lifetime.
+    void pause_reading();                                // e.g. while waiting for a backend
+    void resume_reading();
+    void close(close_reason r = close_reason::local);
+
+    // Information.
+    auto peer() const -> const peer_address&;
+    auto id() const -> connection_id;                    // unique per process
+    auto reactor() -> reactor_context&;                  // per-reactor state, timers, metrics
+};
+----
+
+== Rules
+
+. *Never block.* No sleeping, no blocking syscalls, no locks that another
+  thread may hold. A handler that needs a backend uses the reactor's
+  asynchronous facilities (Phase 2: timers; later: outbound connections).
+. *Bounded work per call.* The reactor serves all its connections in turn; a
+  handler that loops over a huge input should consume part of it and return.
+. *Data lifetime.* `in` / `payload` are valid only during the call. Keep data
+  by copying it (or, later, by taking a reference-counted hold on the buffer).
+. *Errors.* Handlers should be `noexcept`. An exception escaping a handler
+  closes the connection with `close_reason::error`, is counted and logged
+  (rate-limited); it never takes down the reactor.
+. *Metrics.* Handler-specific metrics go through the reactor context
+  (single-writer shards) and must be added to the contract (<<metrics>>).
+
+== Built-in handlers
+
+[cols="1,4",options="header"]
+|===
+| Name | Behaviour (benchmark protocol, <<protocol>>)
+| `discard` | Consumes every frame; replies to nothing. Throughput of the receive path.
+| `echo` | Replies to `ECHO_REQ` with `ECHO_RSP` carrying the same header fields and payload. Round-trip latency.
+| `reqresp` | Replies to `REQ` with `RSP` of `aux` payload bytes. Asymmetric request/response.
+| `protocol` | All of the above by message type (the Phase 1 hello-world behaviour, and the default).
+|===

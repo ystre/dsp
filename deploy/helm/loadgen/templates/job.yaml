@@ -1,0 +1,83 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "loadgen.fullname" . }}
+  labels:
+    {{- include "loadgen.labels" . | nindent 4 }}
+spec:
+  completionMode: Indexed
+  completions: {{ .Values.instances }}
+  parallelism: {{ .Values.instances }}
+  backoffLimit: {{ .Values.job.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  {{- with .Values.job.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "loadgen.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- with .Values.sysctls }}
+        sysctls:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      containers:
+        - name: loadgen
+          image: {{ include "loadgen.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/{{ .Values.binaries.loadgen }}"]
+          args:
+            - --target
+            - {{ default (printf "%s-server:7200" .Release.Name) .Values.target | quote }}
+            {{- range $flag, $value := .Values.run }}
+            - --{{ $flag }}
+            - {{ include "loadgen.arg" $value | quote }}
+            {{- end }}
+            - --instance
+            - $(JOB_COMPLETION_INDEX)
+            - --metrics-port
+            - {{ .Values.metrics.port | quote }}
+            - --linger
+            - {{ .Values.metrics.linger | quote }}
+            {{- range .Values.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

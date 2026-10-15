@@ -1,0 +1,51 @@
+# Integration (umbrella) chart values. Each component is a subchart under a
+# role-based key; see the subcharts' values.yaml for every option.
+#
+#   helm install <release> deploy/helm/umbrella -n <ns> --create-namespace
+#   (deploy/lab/install.sh does this, after checking the cluster provides
+#   everything the release renders)
+#
+# Everything here is per release: one release per namespace (lab, CI) keeps
+# metrics, results and Kafka topics apart. The platform it relies on (the
+# Prometheus Operator, Grafana, the Strimzi operator) is cluster-wide and comes
+# from the dependencies chart (deploy/lab/platform.sh), installed once.
+
+global:
+  image:
+    # Shared by the server and the load generator (one image holds both).       TODO: Split this into two images.
+    repository: localhost:5000/dsp
+    tag: ""
+
+server:
+  enabled: true
+
+# Kafka topics of this release. They live on the platform's shared cluster
+# (dependencies chart), or on the dedicated cluster when `kafka.enabled`. Each
+# is a Strimzi KafkaTopic in that cluster's namespace (the topic operator
+# watches only there), named <prefix><name>.
+#
+# Topics outlive the release (helm.sh/resource-policy: keep): uninstalling
+# keeps their data; `deploy/lab/down.sh --delete-topics` removes them too.
+topics:
+  enabled: true
+  # Shared cluster: Strimzi cluster name and namespace.
+  cluster: kafka
+  clusterNamespace: platform
+  # Empty = "<release namespace>."; the CI deploy test adds its run id.
+  prefix: ""
+  items:
+    # Placeholder until the server has a northbound sink (doc/roadmap.adoc).
+    - name: data
+      partitions: 12
+      replicas: 1
+      config: {}
+
+# A dedicated Kafka cluster in the release namespace (deploy/helm/kafka), for
+# benchmarks of a Kafka sink without neighbours; the topics then go there.
+kafka:
+  enabled: false
+
+# One benchmark run as part of the release (normally runs are driven by
+# tools/bench/run.py --target k8s instead).
+loadgen:
+  enabled: false

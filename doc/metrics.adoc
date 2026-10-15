@@ -1,0 +1,41 @@
+[[metrics]]
+= Metrics (Contract)
+
+Every implementation of the server exports these metric families with these
+labels and meanings, so that the dashboard, alerts and the benchmarking
+framework work unchanged. The load generator exports the `loadgen_*` families.
+
+The source of truth is `contract/metrics.toml`; the tables below are generated
+from it (`tools/contract.py adoc`), the Grafana dashboard is built from it
+(`deploy/grafana/build_dashboard.py` refuses unknown names), and the functional
+test `tests/metrics-contract.sh` checks the binaries against it: every exported
+family must be in the contract with its labels, and every family marked
+_Phase 1_ must be exported.
+
+== Conventions
+
+* Names start with the metric prefix (`{project}` by default, `METRIC_PREFIX`
+  in `project.env`). Counters end in `_total`, durations are in seconds, sizes
+  in bytes.
+* `reactor` is the reactor index (0..N-1). Cardinality is bounded by the core
+  count; there are no per-connection or per-peer labels.
+* Histograms use powers of two of 1.024 µs as upper bounds (1.024 µs ...
+  17.2 s, 25 buckets + `+Inf`, as in the o1 project), so quantiles are
+  comparable across implementations. Quantiles from these buckets have ±50 %
+  resolution; exact latency figures come from the load generator's own
+  histograms (<<loadgen-output>>).
+* Hot-path metrics are single-writer per reactor and summed at scrape time
+  (<<arch-observability>>).
+
+== Adding a metric
+
+. Add it to `contract/metrics.toml` (with `phase1 = true` only if the current
+  binaries export it).
+. Export it from the code.
+. Regenerate: `python3 -I tools/contract.py adoc > doc/generated/metrics.adoc`
+  and, if a panel uses it, `python3 -I deploy/grafana/build_dashboard.py`.
+. CI (`function-test`, `dashboard`, `docs` stages) fails until all three agree.
+
+== Families
+
+include::generated/metrics.adoc[]

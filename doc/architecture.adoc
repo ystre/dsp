@@ -1,0 +1,357 @@
+[[architecture]]
+= Architecture
+
+This chapter is the design of the server that Phase 2 implements. It is written
+to be implementation-ready: where a choice is open, the chapter says what decides
+it and which benchmark measures it.
+
+[[arch-principles]]
+== Principles
+
+. *Shared nothing on the data path.* A connection belongs to exactly one core
+  for its whole life. No locks, no atomics with contention, no cross-core cache
+  line traffic while moving bytes.
+. *Amortise every fixed cost.* A syscall, a wake-up or a cache miss is paid per
+  batch, not per message: one kernel transition carries many completions, one
+  receive carries many frames, one send carries every reply produced in a loop
+  iteration.
+. *No allocation, no copy unless it pays for itself.* Buffers come from
+  per-core pools; frames are parsed in place in the receive buffer; the only
+  copies are into the kernel and, when a handler keeps data, the handler's own.
+. *Push back, never buffer without bound.* When a peer does not read, the
+  server stops reading from it (<<arch-backpressure>>); memory is bounded by
+  configuration.
+. *Measure inside.* Every mechanism above has a counter
+  (<<metrics>>), so a benchmark result can be explained, not just reported.
+
+[[arch-performance-model]]
+== Performance model
+
+Where the time of a small message goes, roughly in order of cost on a modern
+x86 core (figures are orders of magnitude to reason with, not measurements;
+Phase 2 replaces them with measured numbers in <<performance>>):
+
+[cols="3,2,5",options="header"]
+|===
+| Cost | Order | Design answer
+| Kernel transition (syscall, interrupt return) | 100 ns - 1 µs, more with mitigations | io_uring: one `io_uring_enter` per loop iteration for all submissions and completions; multishot operations need no re-arming
+| Wake-up of a sleeping thread | 1 - 10 µs (plus scheduler latency) | Thread per core that only sleeps when idle; optional NAPI busy polling
+| Cache miss to DRAM | ~80 - 100 ns | Connection state compact and core-local; buffers recycled LIFO (cache-hot); no shared counters
+| Cross-core cache line transfer | 50 - 200 ns | Shared-nothing reactors; single-writer metrics merged at scrape time
+| Allocation (general purpose allocator) | 20 - 100 ns, unbounded tail | Per-reactor pools; none on the data path
+| Copy of 200 B | ~5 ns | Accepted where it simplifies ownership; avoided for large payloads (`SEND_ZC`, provided buffers)
+| Frame decode and dispatch | ~5 - 10 ns | Fixed header, in-place parsing, static dispatch (measured: `bench-libproto`)
+|===
+
+The consequence: a server spending 1 µs of kernel time per message tops out at
+~1 M messages/s per core, whatever its user-space code does; batching 64
+messages per kernel transition moves the bound by more than an order of
+magnitude. Batching factors are therefore first-class metrics
+(`{project}_io_uring_cqes_total` per `io_uring_enter`, messages per loop
+iteration).
+
+[[arch-process]]
+== Process structure
+
+[source,subs="attributes+"]
+----
+                 ┌──────────────────────── one process ────────────────────────────────┐
+ NIC RX queue 0 ─┼─▶ reactor 0 (pinned to core 0): io_uring, listeners (SO_REUSEPORT),   │
+ NIC RX queue 1 ─┼─▶ reactor 1 (core 1)           connections, buffer pools, timers,     │
+       ...       │      ...                       metric shards, handler instances       │
+ NIC RX queue N ─┼─▶ reactor N (core N)                                                  │
+                 │                                                                        │
+                 │  admin thread: /metrics /healthz /readyz /config (merges metric shards)│
+                 │  main thread:  configuration, signals, orderly shutdown                │
+                 └────────────────────────────────────────────────────────────────────────┘
+----
+
+* *Reactors* are the only threads touching connections. One per core in the
+  process's CPU affinity mask (Kubernetes: the exclusive CPUs of a Guaranteed
+  pod, <<deployment-tuning>>), or as configured.
+* The *admin thread* never touches reactor state except through single-writer
+  metric shards (read with relaxed loads) and a per-reactor command queue
+  (SPSC ring) for the rare control operations (drain, reconfigure log level).
+* The *main thread* parses the configuration, starts the reactors, waits for
+  signals with `sigwaitinfo` and runs the shutdown sequence
+  (<<arch-lifecycle>>).
+
+[[arch-reactor]]
+== Reactors
+
+A reactor is a loop over one I/O backend instance:
+
+[source,cpp]
+----
+for (;;) {
+    backend.submit_and_wait(min_completions, timeout);   // one kernel transition
+    for (auto& c : backend.completions()) dispatch(c);   // accept, recv, send, timers
+    flush_send_queues();                                 // at most one send per connection
+    timers.advance(now);                                 // hierarchical timing wheel
+    if (draining && connections.empty()) break;
+}
+----
+
+=== Connection distribution
+
+Each reactor opens its own listening socket with `SO_REUSEPORT`; the kernel
+distributes new connections among them by a hash of the 4-tuple. Two
+refinements, both measured by the `churn` and `throughput-*` scenarios:
+
+* *CPU-affine steering.* A classic BPF program attached with
+  `SO_ATTACH_REUSEPORT_CBPF` selects the listener of the CPU that processed the
+  SYN (`SKF_AD_CPU`). With RSS spreading flows over NIC queues and each queue's
+  IRQ affine to one core, a connection's packets, its softirq processing and its
+  reactor then share a core and its caches: no cross-core hand-off at all.
+  Requires one reactor per RX-queue core; the fallback is the default hash.
+* *Imbalance visibility.* `{project}_connections` and messages per reactor are
+  exported by `reactor` label; the dashboard plots them side by side.
+
+A single shared accept queue with work stealing was rejected: it adds
+cross-core traffic on every accept and makes connection placement
+nondeterministic, for no benefit when the kernel already spreads flows.
+
+=== Pinning, NUMA, isolation
+
+Reactor _i_ is pinned to the _i_-th CPU of its affinity mask. Memory (pools,
+rings) is allocated by the reactor itself after pinning, so first touch places
+it on the local NUMA node. Housekeeping threads (admin, main) are not pinned to
+reactor CPUs when spare CPUs exist. Isolation from other workloads is a
+deployment property (`isolcpus`/`nohz_full` on bare metal, the static CPU
+manager on Kubernetes), not something the server can enforce.
+
+[[arch-backend]]
+== I/O backends
+
+The backend is a compile-time policy: the reactor is a template over a type
+satisfying the `io_backend` concept, so the data path has no virtual calls. The
+binary contains both backends; one is chosen at start-up
+(`server.backend: auto | io_uring | epoll`) and reported in
+`{project}_build_info{backend}`.
+
+[[arch-io-uring]]
+=== io_uring (primary)
+
+[cols="2,5",options="header"]
+|===
+| Feature (min. kernel) | Use
+| `IORING_SETUP_SINGLE_ISSUER` + `DEFER_TASKRUN` (6.1) | Completions are processed only when the reactor asks for them: no task-work interrupts in the middle of handler code, better batching.
+| `IORING_SETUP_COOP_TASKRUN` (5.19) | Fallback when `DEFER_TASKRUN` is unavailable.
+| Multishot accept (5.19), direct descriptors | One SQE accepts connections until cancelled; accepted sockets go straight into the registered file table (no fd lookup per operation).
+| Multishot receive (6.0) + provided buffer rings (5.19) | One SQE per connection receives repeatedly into buffers the kernel picks from a per-reactor ring; no buffer is pinned to an idle connection.
+| Receive bundles (6.10), incremental buffer consumption (6.12) | One completion carries several buffers; large buffers are consumed partially instead of wasting their tail on small messages.
+| `IORING_OP_SEND_ZC` (6.0) | Zero-copy send above a size threshold (initially 16 KiB, to be measured: `throughput-64KiB`). Below it, copying is cheaper than page pinning and the extra notification completion.
+| Send bundles (6.10) | A connection's queued reply buffers go out in one operation.
+| NAPI busy poll registration (6.9) | Optional (`server.busy_poll_us`): the reactor polls the NIC queue instead of sleeping, trading CPU for latency.
+| Zero-copy receive, zcrx (6.15) | Future: needs NIC header/data split and a dedicated queue; evaluated in M6.
+|===
+
+`SQPOLL` (a kernel thread polling the submission queue) is not used by
+default: it burns a second core per reactor and `DEFER_TASKRUN` already
+removes most submission syscalls. It stays a configuration option to measure.
+
+[[arch-epoll]]
+=== epoll (fallback and control)
+
+Edge-triggered `epoll` with per-connection read budgets (fairness: a connection
+that exhausts its budget goes on a ready list, since no new edge will arrive
+for data already queued), `writev` for send queues, `recvmmsg`/`sendmmsg` for
+UDP, busy polling through `EPIOCSPARAMS` (6.9). It is the comparison point that
+quantifies what io_uring buys, and the backend for environments where
+io_uring is disabled (`kernel.io_uring_disabled`, restrictive seccomp
+profiles; <<arch-security>>).
+
+[[arch-memory]]
+== Memory
+
+* *Per-reactor pools.* Connection objects come from a slab of fixed-size slots
+  (index-addressed; a 32-bit generation counter in the index detects stale
+  completions). Buffers come from a pool of fixed-size chunks (default 16 KiB,
+  huge-page backed when available) shared by the receive ring and the send
+  queues. Nothing on the data path calls the general-purpose allocator.
+* *Receive buffers.* With multishot receive, the kernel fills buffers from the
+  ring; a buffer is returned to the ring as soon as the handler has consumed it.
+  A frame that straddles two buffers is assembled into a per-connection
+  overflow buffer, the only case where the server copies received data.
+* *Bounds.* Memory is bounded by configuration: ring entries × chunk size,
+  plus per-connection send queue limits (<<arch-backpressure>>), plus
+  connection slots. `{project}_buffer_bytes{kind}` exports each part.
+
+[[arch-lifecycle]]
+== Connection lifecycle
+
+----
+accepted ─▶ [handshake: TLS / WebSocket upgrade] ─▶ open ─▶ draining ─▶ closed
+               (setup timeout)                    (idle timeout)
+----
+
+Timeouts (setup, idle, drain) live in a per-reactor hierarchical timing wheel
+(O(1) insert and expiry, one coarse tick per loop iteration), never in
+per-connection timer file descriptors.
+
+*Shutdown* (SIGTERM): readiness goes false; listeners close (the kernel stops
+sending new connections; Kubernetes stops routing); open connections get the
+handler's `on_close(shutdown)` and a drain period to flush replies; then the
+reactors exit. `terminationGracePeriodSeconds` in the chart covers the drain
+period.
+
+[[arch-write-path]]
+== Write path
+
+A handler's reply is appended to the connection's send queue: a chain of
+buffer chunks, written into in place (`reserve`/`commit`, <<handler-api>>) or
+handed over as an owned buffer. Queues are flushed once per loop iteration:
+every reply produced while processing one receive completion leaves in a single
+send. `TCP_NODELAY` is set; batching is the server's job, not Nagle's.
+
+[[arch-backpressure]]
+=== Backpressure
+
+When a connection's queued bytes exceed the high watermark (default 1 MiB), the
+reactor stops reading from it (it does not re-arm, or cancels, the multishot
+receive); reading resumes below the low watermark. The peer's unread data
+stays in the kernel's socket buffers and TCP flow control slows the peer down.
+Nothing is dropped, and memory stays bounded.
+`{project}_backpressure_events_total` and `_seconds_total` make it visible.
+
+[[arch-layering]]
+== Protocol layering
+
+----
+transport (TCP | UDP | Unix stream)  →  codec (frames | WebSocket | raw)  →  handler
+----
+
+* *Transports* own sockets and buffers.
+* *Codecs* turn bytes into messages: the length-prefixed frame codec of the
+  benchmark protocol (<<protocol>>), WebSocket (RFC 6455: HTTP/1.1 upgrade,
+  masking removed in place with SIMD XOR, fragments assembled in the overflow
+  buffer, control frames handled by the codec), or `raw` (bytes passed through,
+  the handler does its own framing).
+* *Handlers* implement the application (<<handler-api>>).
+
+A listener binds one transport, one codec and one handler
+(`listeners[]` in the configuration). All combinations are template
+instantiations selected at start-up from a closed set.
+
+[[arch-udp]]
+== UDP
+
+One `SO_REUSEPORT` socket per reactor. Receive: io_uring multishot `recvmsg`
+with provided buffers (epoll: `recvmmsg` of up to 64 datagrams); `UDP_GRO`
+lets the kernel coalesce datagrams of one flow into one buffer. Replies use
+`UDP_SEGMENT` (GSO) to send many datagrams in one operation. There is no
+per-peer state; a datagram is handed to the handler with its peer address, and
+each datagram carries whole frames (<<protocol-udp>>). Kernel-side drops
+(receive buffer overflows) are visible only through node metrics
+(`node_netstat_Udp_RcvbufErrors`), which the dashboard shows next to the
+server's own drop counter.
+
+[[arch-tls]]
+== TLS (milestone M5)
+
+Handshakes run on the reactor with OpenSSL in non-blocking mode; after the
+handshake, the session keys are handed to the kernel (kTLS, `TLS_TX`/`TLS_RX`)
+so the data path stays the same plain socket operations, including io_uring
+and `sendfile`/`SEND_ZC`. OpenSSL must be built with `enable-ktls`. Ciphers
+without kTLS support stay in user space (slower path, counted separately).
+
+[[arch-config]]
+== Configuration (Contract)
+
+YAML file given with `--config`; `${VAR}` and `${VAR:-default}` are expanded
+from the environment before parsing; every key is optional. The effective
+configuration is served as JSON on `/config`. Phase 1 takes command-line flags
+only (`--port`, `--admin-port`).
+
+[source,yaml]
+----
+server:
+  backend: auto              # auto | io_uring | epoll
+  reactors: auto             # auto = one per CPU in the affinity mask
+  cpus: ""                   # explicit CPU list, e.g. "2-7"; empty = affinity mask
+  busy_poll_us: 0            # NAPI busy polling budget; 0 = off
+  shutdown_drain_s: 10
+listeners:
+  - name: tcp
+    transport: tcp           # tcp | udp | unix
+    address: 0.0.0.0:7200
+    codec: frames            # frames | websocket | raw
+    handler: echo            # one of the compiled-in handlers (handler-api)
+    steering: cpu            # cpu (CBPF, SO_INCOMING_CPU) | hash
+    backlog: 4096
+buffers:
+  chunk_bytes: 16384
+  ring_entries: 4096         # per reactor
+  huge_pages: auto           # auto | on | off
+limits:
+  connections_per_reactor: 65536
+  max_frame_bytes: 16777216
+  send_high_watermark_bytes: 1048576
+  send_low_watermark_bytes: 262144
+  setup_timeout_s: 10
+  idle_timeout_s: 0          # 0 = none
+io_uring:
+  sq_entries: 4096
+  send_zc_threshold_bytes: 16384
+  sqpoll: false
+admin:
+  address: 0.0.0.0:9555
+log:
+  level: info                # trace | debug | info | warn | error
+----
+
+[[arch-observability]]
+== Observability
+
+* *Metrics* (<<metrics>>): every reactor writes its own shard of counters and
+  histograms (single writer, relaxed stores); the admin thread sums shards at
+  scrape time. No metric update is more expensive than an increment of a
+  core-local cache line.
+* *Logging* is off the data path: connection-level events are counted, not
+  logged; errors are logged with a per-reason rate limit.
+* *Admin endpoints*: `/metrics` (Prometheus text format 0.0.4), `/healthz`
+  (process alive), `/readyz` (listeners open and not draining), `/config`.
+
+[[arch-security]]
+== Security
+
+* Runs as non-root with no capabilities, read-only root filesystem, the
+  `RuntimeDefault` seccomp profile (chart defaults).
+* *io_uring and seccomp.* Some container runtimes' default seccomp profiles
+  deny `io_uring_setup`, and some hosts disable io_uring entirely
+  (`kernel.io_uring_disabled`). With `backend: auto` the server falls back to
+  epoll and says so in `{project}_build_info{backend}` and in the log; verify
+  the backend on every new platform before comparing numbers. A custom
+  `Localhost` seccomp profile that allows the io_uring syscalls is the
+  production answer, not `Unconfined`.
+* Input is untrusted: frame lengths are bounded (`limits.max_frame_bytes`),
+  malformed input closes the connection and is counted by reason.
+
+[[arch-decisions]]
+== Decisions
+
+[cols="1,4,5",options="header"]
+|===
+| # | Decision | Rationale
+| D1 | Thread per core, shared nothing, connections never migrate | Removes locks and cross-core traffic from the data path; scales with cores; the kernel already balances connections (SO_REUSEPORT)
+| D2 | io_uring primary, epoll fallback, chosen at start-up | io_uring batches kernel transitions and removes re-arming; epoll keeps restricted platforms working and quantifies the gain
+| D3 | Backend and handler dispatch by templates over a closed set | No virtual calls per message; the set is known at build time (handlers are compiled in)
+| D4 | Per-reactor pools, no general-purpose allocation on the data path | Bounded memory, no allocator contention or tail latency
+| D5 | Backpressure through TCP flow control | Bounded memory, honest latency, no silent loss (o1 D7)
+| D6 | Single-writer metric shards merged at scrape time | Metrics cost an increment, never a contended atomic (o1 pattern)
+| D7 | A fixed benchmark protocol with sequence numbers and timestamps | One load generator measures every transport and handler; integrity is checked on every reply
+| D8 | Contracts (protocol, metrics, configuration, load generator CLI and summary) defined before the implementation | Dashboards, tooling and tests are built and validated in Phase 1 and do not change when the implementation lands
+| D9 | CPU-affine connection steering (CBPF) as default when reactors cover the RX-queue cores | Keeps softirq processing, socket and reactor on one core
+| D10 | No SQPOLL by default | Costs a core per reactor; DEFER_TASKRUN already batches submissions; measurable as an option
+|===
+
+[[arch-open]]
+== Open questions (answered by measurement in Phase 2)
+
+* `SEND_ZC` threshold per transport and NIC (loopback always copies).
+* Buffer chunk size and ring depth against connection count (memory) and
+  throughput (ring exhaustion: `{project}_buffer_ring_empty_total`).
+* Value of CBPF steering versus hash distribution on the target NICs.
+* Busy polling: latency gained versus CPU spent, per load level.
+* epoll versus io_uring at low connection counts, where io_uring's advantages
+  shrink.

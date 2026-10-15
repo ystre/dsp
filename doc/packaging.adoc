@@ -1,0 +1,135 @@
+[[packaging]]
+= Packaging
+
+== Release artifacts
+
+`ci/package.sh` writes `dist/`:
+
+[source,subs="attributes+"]
+----
+dist/
+  charts/{project}-<ver>.tgz, {project}-server-<ver>.tgz, {project}-loadgen-<ver>.tgz, {project}-kafka-<ver>.tgz, {project}-deps-<ver>.tgz
+  {project}-<ver>-linux-x86_64.tar.gz     bin/{project}-server, bin/{project}-loadgen (debug info stripped)
+  {project}-<ver>-debug.tar.gz            lib/debug/.build-id/xx/yyyy.debug (for gdb / debuginfod)
+  {project}-<ver>.csar                    ETSI NFV SOL004 VNF package
+  SHA256SUMS
+----
+
+The runtime image `localhost:5000/{project}:<ver>` (`ci/image.sh`) is distroless
+(`gcr.io/distroless/cc-debian13:nonroot`) and holds both binaries. Everything
+except glibc is linked statically.
+
+[[csar]]
+== VNF package (CSAR)
+
+The package follows ETSI GS NFV-SOL 004 (TOSCA-Metadata option), with a SOL001
+VNFD that describes the server as a containerised VNF deployed by one Helm
+chart. It is built by `tools/csar/build.py` from `csar/` and checked by
+`tools/csar/validate.py`.
+
+[source,subs="attributes+"]
+----
+{project}-<ver>.csar (zip)
+  TOSCA-Metadata/TOSCA.meta            entry points (below)
+  Definitions/vnfd.yaml                the VNFD (rendered from csar/Definitions/vnfd.yaml.tpl)
+  Definitions/etsi_nfv_sol001_common_types.yaml, etsi_nfv_sol001_vnfd_types.yaml   vendored ETSI types
+  Artifacts/Deployment/HELM/{project}-<ver>.tgz   the MCIOP: integration chart, subcharts vendored
+  Artifacts/Images/{project}-<ver>.tar            optional (CSAR_WITH_IMAGES=1)
+  Files/ChangeLog.txt  Files/Licenses/  Files/Tests/  [Files/Certificates/{project}.cert]
+  {project}.mf                                    manifest: metadata + SHA-256 of every file [+ CMS signature]
+----
+
+`TOSCA.meta`:
+
+[source,subs="attributes+"]
+----
+TOSCA-Meta-File-Version: 1.0
+CSAR-Version: 1.1
+Created-By: <VENDOR>
+Entry-Definitions: Definitions/vnfd.yaml
+ETSI-Entry-Manifest: {project}.mf
+ETSI-Entry-Change-Log: Files/ChangeLog.txt
+ETSI-Entry-Licenses: Files/Licenses
+ETSI-Entry-Tests: Files/Tests
+ETSI-Entry-Certificate: Files/Certificates/{project}.cert     (signed packages only)
+----
+
+=== VNFD
+
+[cols="2,2,5",options="header"]
+|===
+| Node template | Type | Content
+| `vnf` | `<vendor>.{project}.VNF` (derived from `tosca.nodes.nfv.VNF`) | Descriptor id (UUIDv5 of vendor, product and version: stable per release), provider, product name, software version, `vnfm_info`, one deployment flavour `default`, the `Vnflcm` interface.
+| `mciop` | `tosca.nodes.nfv.Mciop` | The Helm chart artifact (`tosca.artifacts.nfv.HelmChart`), associated with the `server` VDU.
+| `server` | `tosca.nodes.nfv.Vdu.OsContainerDeployableUnit` | The server pods; 1 to 8 instances.
+| `server_container` | `tosca.nodes.nfv.Vdu.OsContainer` | CPU and memory requests and limits (matching the chart defaults); the image as a `SwImage` artifact when bundled.
+| `data_cp`, `admin_cp` | `tosca.nodes.nfv.VirtualCp` | Exposed ports: tcp 7200, udp 7201, ws 7280; admin 9555 with its paths.
+|===
+
+Policies: one instantiation level (`default`: one server pod). Scaling beyond
+that is a Helm value today; a scaling aspect is added when the VNFM integration
+needs it.
+
+=== SOL001 version
+
+The VNFD imports the ETSI type definitions, vendored by
+`tools/csar/fetch-sol001.sh` (version in `csar/Definitions/SOL001_VERSION`, BSD-3
+license in `Files/Licenses/`). The package uses *4.4.1*, the newest release whose
+files are valid YAML. In v5.1.1 and v5.2.1, `etsi_nfv_sol001_vnfd_types.yaml`
+has a property key without its colon (`change_selected_deployable_modules_op`),
+which every strict YAML parser, and so every VNFM, rejects. The fetch script
+refuses files that do not parse. The ETSI files also contain stray tab
+characters in trailing whitespace; the validator tolerates those.
+The manifest claims the same version (`compatible_specification_versions`,
+`vnfm_info: etsivnfm:v4.4.1`).
+
+=== Manifest and signing
+
+The manifest starts with the SOL004 metadata (`vnfd_id`, `vnf_provider_id`,
+`vnf_product_name`, `vnf_release_date_time`, `vnf_package_version`,
+`compatible_specification_versions`, `vnfm_info`). It then lists every file
+except itself and the certificate, each with `Source`, `Algorithm: SHA-256`
+and `Hash`.
+
+Signing follows SOL004 option 1: a CMS signature (SHA-256, detached content)
+of the manifest, appended to it as a PEM block, with the signing certificate
+in the package:
+
+[source,sh]
+----
+python3 -I tools/csar/build.py --chart dist/charts/<chart>.tgz --sign-key key.pem --sign-cert cert.pem
+python3 -I tools/csar/validate.py <package>.csar --ca-file ca.pem
+----
+
+`ci/package-test.sh` exercises signing with a throwaway certificate on every
+run. Production keys never belong in the repository or in CI logs.
+
+=== Validation
+
+`tools/csar/validate.py` checks:
+
+* the `TOSCA.meta` keys and that every entry it references exists;
+* that every file is in the manifest with a matching digest, with no file
+  missing or extra;
+* the manifest metadata;
+* the signature, if present;
+* the VNFD: it parses, its imports are in the package, every node and policy
+  type is known, requirement targets and artifact files exist, the VNF node
+  type derives from `tosca.nodes.nfv.VNF`, and it has a Helm artifact;
+* that the chart in the package passes `helm lint`.
+
+It is a structural check, not a full TOSCA type checker. Run the target VNFM's
+own onboarding validation before a delivery.
+
+=== Deploying a package
+
+`deploy/lab/up.sh <package>.csar` validates the package, takes the chart out
+of it and, if the package carries an image, loads and pushes that image, then
+installs the release (<<deployment-lab>>). `tools/csar/extract.py` does the
+extraction (`chart OUT_DIR`, `image` to stdout).
+
+=== Reproducibility
+
+Zip entries are sorted, with `TOSCA.meta` first. They carry the time of the
+last commit (`SOURCE_DATE_EPOCH` overrides it). The same inputs therefore
+produce a byte-identical package.

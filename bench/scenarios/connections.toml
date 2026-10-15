@@ -1,0 +1,45 @@
+# Connection handling: accept rate under churn, and memory/CPU per idle
+# connection at scale. Needs the Phase 2 load generator.
+
+[[scenario]]
+name        = "churn"
+description = "Connect, send one echo, close; as fast as possible on 8 threads."
+duration_s  = 30
+warmup_s    = 5
+repeat      = 3
+
+[scenario.loadgen]
+type        = "echo"
+mode        = "churn"
+payload     = "fixed:64"
+connections = 512
+threads     = 8
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"throughput.connections_per_s" = 0.10
+
+[[scenario]]
+name        = "conn-scale-100k"
+description = "100k mostly idle connections, each sending one 64 B echo per second."
+duration_s  = 120
+warmup_s    = 60
+repeat      = 1
+
+[scenario.loadgen]
+type        = "echo"
+mode        = "idle-fanout"
+rate        = 100_000
+payload     = "fixed:64"
+connections = 100_000
+threads     = 8
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"server.max_rss_kib" = 0.10

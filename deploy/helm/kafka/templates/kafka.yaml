@@ -1,0 +1,104 @@
+{{- $k := .Values }}
+{{- $rf := min (int $k.replicas) 3 }}
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: {{ $k.name }}-nodes
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+    strimzi.io/cluster: {{ $k.name }}
+spec:
+  replicas: {{ $k.replicas }}
+  roles:
+    {{- toYaml $k.roles | nindent 4 }}
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: {{ $k.storage.size }}
+        deleteClaim: {{ $k.storage.deleteClaim }}
+        kraftMetadata: shared
+  resources:
+    {{- toYaml $k.resources | nindent 4 }}
+  jvmOptions:
+    "-Xms": {{ $k.heap }}
+    "-Xmx": {{ $k.heap }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: {{ $k.name }}
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+spec:
+  kafka:
+    version: {{ $k.version }}
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      offsets.topic.replication.factor: {{ $rf }}
+      transaction.state.log.replication.factor: {{ $rf }}
+      transaction.state.log.min.isr: {{ max 1 (sub $rf 1) }}
+      default.replication.factor: {{ $rf }}
+      min.insync.replicas: {{ max 1 (sub $rf 1) }}
+      num.partitions: {{ $k.partitions }}
+      {{- with $k.config }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+    metricsConfig:
+      type: strimziMetricsReporter
+      values:
+        allowList:
+          - "kafka_server_brokertopicmetrics.*"
+          - "kafka_network_requestmetrics.*"
+          - "kafka_network_socketserver.*"
+          - "kafka_server_replicamanager.*"
+          - "kafka_log_log.*"
+          - "kafka_controller.*"
+  entityOperator:
+    topicOperator: {}
+  {{- if $k.kafkaExporter.enabled }}
+  kafkaExporter:
+    topicRegex: {{ $k.kafkaExporter.topicRegex | quote }}
+    groupRegex: {{ $k.kafkaExporter.groupRegex | quote }}
+  {{- end }}
+{{- if $k.podMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $k.name }}-brokers
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/kind: Kafka
+      strimzi.io/cluster: {{ $k.name }}
+      strimzi.io/broker-role: "true"
+  podMetricsEndpoints:
+    - port: tcp-prometheus
+      path: /metrics
+      interval: {{ $k.podMonitor.interval }}
+{{- if $k.kafkaExporter.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $k.name }}-exporter
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/name: {{ $k.name }}-kafka-exporter
+  podMetricsEndpoints:
+    - port: tcp-prometheus
+      path: /metrics
+      interval: {{ $k.podMonitor.interval }}
+{{- end }}
+{{- end }}

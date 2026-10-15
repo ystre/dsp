@@ -1,0 +1,8 @@
+Release {{ .Release.Name }} in {{ .Release.Namespace }}:
+  server:   {{ if .Values.server.enabled }}{{ .Release.Name }}-server:7200{{ else }}disabled{{ end }}
+  kafka:    {{ if .Values.kafka.enabled }}dedicated: {{ .Values.kafka.name | default "kafka" }}-kafka-bootstrap:9092{{ else }}shared: {{ .Values.topics.cluster }}-kafka-bootstrap.{{ .Values.topics.clusterNamespace }}.svc:9092{{ end }}
+  topics:   {{ if .Values.topics.enabled }}{{ $p := .Values.topics.prefix | default (printf "%s." .Release.Namespace) }}{{ range $i, $t := .Values.topics.items }}{{ if $i }}, {{ end }}{{ $p }}{{ $t.name }}{{ end }} (kept on uninstall){{ else }}none{{ end }}
+  loadgen:  {{ if .Values.loadgen.enabled }}one run as Job {{ .Release.Name }}-loadgen{{ else }}disabled{{ end }}
+
+Smoke test:  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+Benchmark:   tools/bench/run.py --target k8s --namespace {{ .Release.Namespace }} --release {{ .Release.Name }} --scenario smoke

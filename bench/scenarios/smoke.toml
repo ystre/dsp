@@ -1,0 +1,38 @@
+# Smoke scenarios: runnable by the Phase 1 load generator, used by CI
+# (ci/perf-smoke.sh) to exercise the whole benchmarking pipeline.
+
+[[scenario]]
+name        = "smoke"
+description = "One connection, closed loop, 200 B sink messages. Pipeline check, not a performance number."
+count       = 2_000_000
+repeat      = 3
+
+[scenario.loadgen]
+type    = "data"
+payload = "fixed:200"
+batch   = 64
+
+[scenario.local]
+server_cpus  = "2"
+loadgen_cpus = "4"
+
+[scenario.thresholds]
+"throughput.messages_per_s" = 0.30
+
+[[scenario]]
+name        = "smoke-echo"
+description = "One connection, closed loop, 200 B echo with a pipeline depth of 64."
+count       = 500_000
+repeat      = 3
+
+[scenario.loadgen]
+type    = "echo"
+payload = "fixed:200"
+batch   = 64
+
+[scenario.local]
+server_cpus  = "2"
+loadgen_cpus = "4"
+
+[scenario.thresholds]
+"throughput.messages_per_s" = 0.30

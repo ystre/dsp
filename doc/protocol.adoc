@@ -1,0 +1,72 @@
+[[protocol]]
+= Benchmark wire protocol (Contract)
+
+One small protocol lets one load generator drive every transport and handler,
+measure round trips and verify integrity. It is also the default protocol of
+the server's built-in handlers. Implementation: `libproto/libproto/frame.hpp`.
+
+== Frame
+
+A frame is a fixed 32-byte header followed by `len` payload bytes. All
+integers are little-endian.
+
+[cols="1,1,1,6",options="header"]
+|===
+| Offset | Field | Type | Meaning
+| 0  | `magic`   | u16 | `0xD5F0`. Anything else is a protocol error (`bad_magic`).
+| 2  | `version` | u8  | `1`. Anything else is a protocol error (`bad_version`).
+| 3  | `type`    | u8  | Message type, below. Unknown types are a protocol error (`bad_type`).
+| 4  | `len`     | u32 | Payload length in bytes, header excluded. At most 16 MiB (`limits.max_frame_bytes`; `too_large`).
+| 8  | `seq`     | u64 | Sequence number of the frame on its connection (stream transports) or flow (UDP), starting at 0.
+| 16 | `ts_ns`   | u64 | Sender's `CLOCK_MONOTONIC` time of the intended send, in nanoseconds. Copied unchanged into replies.
+| 24 | `aux`     | u32 | Type-specific: requested response payload size for `REQ`; 0 otherwise.
+| 28 | `flags`   | u32 | Reserved, sent as 0, ignored by receivers.
+|===
+
+== Message types
+
+[cols="1,2,5",options="header"]
+|===
+| Value | Name | Semantics
+| 1 | `DATA`     | Sink: the server consumes it; no reply.
+| 2 | `ECHO_REQ` | The server replies with `ECHO_RSP`: same `seq`, `ts_ns`, `len` and payload.
+| 3 | `ECHO_RSP` | Reply to `ECHO_REQ`.
+| 4 | `REQ`      | The server replies with `RSP`: same `seq` and `ts_ns`, `len = aux` (payload content unspecified), `aux = 0`.
+| 5 | `RSP`      | Reply to `REQ`.
+|===
+
+Replies are sent in request order on the same connection. A protocol error
+closes the connection; frames before it are processed normally.
+
+== Transport mappings
+
+TCP, Unix stream:: A byte stream of frames, no padding. Frames may span
+receive boundaries arbitrarily.
+[[protocol-udp]] UDP:: Each datagram carries one or more _whole_ frames
+(at most 65 507 bytes in total). A truncated frame makes the whole datagram
+invalid (counted, not answered). Replies go to the datagram's source address.
+`seq` is per sender flow; loss and reordering are visible to the receiver,
+which is the point of measuring UDP.
+WebSocket:: Each *binary* message carries one or more whole frames. Text
+messages are protocol errors. WebSocket control frames (ping, pong, close) are
+handled by the codec, below this protocol.
+
+== Integrity rules
+
+Receivers of replies (the load generator) check per connection:
+
+* `seq` equal to the expected value: in order; expected becomes `seq + 1`.
+* `seq` greater: `seq - expected` frames are *missing*; expected becomes `seq + 1`.
+* `seq` smaller: *out of order* (or duplicate, if already seen).
+* Wrong reply type or length: *corrupt*; the stream can no longer be trusted
+  and the connection is closed.
+
+Over TCP every violation is a defect. Over UDP missing frames are loss, reported
+as such.
+
+== Versioning
+
+Incompatible changes increment `version`; receivers reject unknown versions.
+New message types and `flags` bits may be added within a version only when old
+receivers can safely treat them as errors (unknown types) or ignore them
+(flags).

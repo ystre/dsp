@@ -1,0 +1,7 @@
+Change log of the VNF package. Newest first; one entry per released version
+(VERSION file). See doc/release-strategy.adoc.
+
+0.1.0
+  * Phase 1: framework. Hello-world server and load generator (benchmark wire
+    protocol, metrics contract subset), Helm charts (server, kafka, loadgen,
+    umbrella; deps for the platform), Grafana dashboard, SOL004 package.

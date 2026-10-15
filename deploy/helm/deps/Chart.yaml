@@ -1,0 +1,21 @@
+apiVersion: v2
+name: dsp-deps
+description: Platform dependencies, installed once per cluster - observability (kube-prometheus-stack), the Kafka operator (Strimzi) and a shared Kafka cluster - each one toggleable.
+type: application
+# Kept equal to the root VERSION file (tools/bump-version.sh, ci/pre-checks.sh).
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: kube-prometheus-stack
+    version: 92.0.0
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: kube-prometheus-stack.enabled
+  - name: strimzi-kafka-operator
+    version: 1.2.0
+    repository: https://strimzi.io/charts/
+    condition: strimzi-kafka-operator.enabled
+  - name: dsp-kafka
+    alias: kafka
+    version: 0.1.0
+    repository: file://../kafka
+    condition: kafka.enabled

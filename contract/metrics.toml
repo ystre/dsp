@@ -1,0 +1,329 @@
+# Metrics contract (see doc/metrics.adoc).
+#
+# Every implementation of the server must export these names with these labels
+# and semantics, so that dashboards, alerts and tools/bench work unchanged.
+# `{prefix}` is METRIC_PREFIX from project.env; loadgen metrics are not
+# prefixed (the load generator is a tool, not the product).
+#
+# This file is the source for:
+#   - deploy/grafana/build_dashboard.py  (panel queries are checked against it)
+#   - tools/contract.py adoc             (doc/generated/metrics.adoc)
+#   - tests/metrics-contract.sh          (names exported by the binaries)
+#
+# Fields:
+#   name     metric family name
+#   type     counter | gauge | histogram
+#   labels   label names (values are documented in `help`)
+#   phase1   true if the hello-world implementation already exports it
+#   help     meaning; also the # HELP text
+
+# Histograms use powers of two of 1.024 us as upper bounds (1.024 us ... 17.2 s,
+# 25 buckets + +Inf), as in o1, so quantiles stay comparable across implementations.
+
+[[server]]
+group  = "Process"
+name   = "{prefix}_build_info"
+type   = "gauge"
+labels = ["version", "revision", "backend"]
+phase1 = true
+help   = "Always 1. backend = io_uring | epoll | hello (Phase 1 placeholder)."
+
+[[server]]
+group  = "Process"
+name   = "{prefix}_reactors"
+type   = "gauge"
+labels = []
+phase1 = true
+help   = "Number of reactors (event loops, one per pinned core)."
+
+[[server]]
+group  = "Connections"
+name   = "{prefix}_connections_accepted_total"
+type   = "counter"
+labels = ["reactor", "transport"]
+phase1 = true
+help   = "Accepted connections. transport = tcp | ws | unix."
+
+[[server]]
+group  = "Connections"
+name   = "{prefix}_connections_closed_total"
+type   = "counter"
+labels = ["reactor", "transport", "reason"]
+phase1 = true
+help   = "Closed connections. reason = peer | error | protocol | idle | shutdown."
+
+[[server]]
+group  = "Connections"
+name   = "{prefix}_connections_rejected_total"
+type   = "counter"
+labels = ["reactor", "transport", "reason"]
+phase1 = false
+help   = "Connections refused after accept. reason = limit | handshake."
+
+[[server]]
+group  = "Connections"
+name   = "{prefix}_connections"
+type   = "gauge"
+labels = ["reactor", "transport"]
+phase1 = true
+help   = "Open connections."
+
+[[server]]
+group  = "Traffic"
+name   = "{prefix}_rx_bytes_total"
+type   = "counter"
+labels = ["reactor", "transport"]
+phase1 = true
+help   = "Bytes received from sockets (after TLS, if any)."
+
+[[server]]
+group  = "Traffic"
+name   = "{prefix}_tx_bytes_total"
+type   = "counter"
+labels = ["reactor", "transport"]
+phase1 = true
+help   = "Bytes written to sockets."
+
+[[server]]
+group  = "Traffic"
+name   = "{prefix}_rx_messages_total"
+type   = "counter"
+labels = ["reactor", "transport", "type"]
+phase1 = true
+help   = "Frames received. type = data | echo_req | req (doc/protocol.adoc)."
+
+[[server]]
+group  = "Traffic"
+name   = "{prefix}_tx_messages_total"
+type   = "counter"
+labels = ["reactor", "transport", "type"]
+phase1 = true
+help   = "Frames sent. type = echo_rsp | rsp."
+
+[[server]]
+group  = "Traffic"
+name   = "{prefix}_protocol_errors_total"
+type   = "counter"
+labels = ["reactor", "transport", "reason"]
+phase1 = true
+help   = "Malformed input; the connection is closed. reason = bad_magic | bad_version | too_large | bad_type."
+
+[[server]]
+group  = "UDP"
+name   = "{prefix}_udp_datagrams_total"
+type   = "counter"
+labels = ["reactor", "direction"]
+phase1 = false
+help   = "UDP datagrams. direction = rx | tx. A GRO/GSO super-datagram counts as its segments."
+
+[[server]]
+group  = "UDP"
+name   = "{prefix}_udp_dropped_total"
+type   = "counter"
+labels = ["reactor", "reason"]
+phase1 = false
+help   = "Datagrams dropped by the server. reason = truncated | malformed | no_buffer. Kernel drops: node-exporter."
+
+[[server]]
+group  = "Backpressure"
+name   = "{prefix}_backpressure_events_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = false
+help   = "Times a connection stopped reading because its send queue crossed the high watermark."
+
+[[server]]
+group  = "Backpressure"
+name   = "{prefix}_backpressure_seconds_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = false
+help   = "Connection-seconds spent with reading paused by backpressure."
+
+[[server]]
+group  = "Backpressure"
+name   = "{prefix}_send_queue_bytes"
+type   = "gauge"
+labels = ["reactor"]
+phase1 = false
+help   = "Bytes queued for sending, summed over the reactor's connections."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_loop_iterations_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = true
+help   = "Event-loop iterations (one wait + processing of its completions/events)."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_loop_busy_seconds_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = false
+help   = "Time the reactor spent outside the kernel wait; rate() is the reactor's utilisation (0..1)."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_syscalls_total"
+type   = "counter"
+labels = ["reactor", "op"]
+phase1 = false
+help   = "Syscalls issued by the reactor. op = io_uring_enter | epoll_wait | recv | send | accept | other."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_io_uring_sqes_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = false
+help   = "Submission queue entries submitted (io_uring backend)."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_io_uring_cqes_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = false
+help   = "Completion queue entries reaped (io_uring backend). cqes / io_uring_enter = batching factor."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_buffer_ring_empty_total"
+type   = "counter"
+labels = ["reactor"]
+phase1 = false
+help   = "Receives that found the provided buffer ring empty (ENOBUFS) and were re-armed."
+
+[[server]]
+group  = "Reactor"
+name   = "{prefix}_zerocopy_sends_total"
+type   = "counter"
+labels = ["reactor", "result"]
+phase1 = false
+help   = "SEND_ZC operations. result = zerocopy | copied (the kernel fell back to copying)."
+
+[[server]]
+group  = "Memory"
+name   = "{prefix}_buffer_bytes"
+type   = "gauge"
+labels = ["reactor", "kind"]
+phase1 = false
+help   = "Memory held by buffers. kind = rx_ring | rx_conn | tx | pool."
+
+[[server]]
+group  = "Latency"
+name   = "{prefix}_handler_duration_seconds"
+type   = "histogram"
+labels = ["reactor"]
+phase1 = false
+help   = "Time spent in the handler per receive completion (all frames of one read)."
+
+[[server]]
+group  = "Latency"
+name   = "{prefix}_message_age_seconds"
+type   = "histogram"
+labels = ["reactor"]
+phase1 = false
+help   = "Receive time minus header ts_ns (one-way latency; meaningful with the sender on the same clock)."
+
+# ------------------------------------------------------------------------------
+# Load generator (doc/loadgen.adoc)
+# ------------------------------------------------------------------------------
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_build_info"
+type   = "gauge"
+labels = ["version", "revision"]
+phase1 = true
+help   = "Always 1."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_connections"
+type   = "gauge"
+labels = []
+phase1 = true
+help   = "Open connections."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_connect_errors_total"
+type   = "counter"
+labels = []
+phase1 = true
+help   = "Failed connection attempts."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_tx_messages_total"
+type   = "counter"
+labels = ["type"]
+phase1 = true
+help   = "Frames sent. type = data | echo_req | req."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_tx_bytes_total"
+type   = "counter"
+labels = []
+phase1 = true
+help   = "Bytes sent (headers included)."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_rx_messages_total"
+type   = "counter"
+labels = []
+phase1 = true
+help   = "Reply frames received."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_rx_bytes_total"
+type   = "counter"
+labels = []
+phase1 = true
+help   = "Bytes received."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_integrity_errors_total"
+type   = "counter"
+labels = ["kind"]
+phase1 = true
+help   = "Reply sequence violations. kind = missing | duplicate | out_of_order | corrupt."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_rtt_seconds"
+type   = "histogram"
+labels = []
+phase1 = false
+help   = "Round trip from the intended send time to the reply (coordinated-omission safe in open-loop mode)."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_send_lag_seconds"
+type   = "histogram"
+labels = []
+phase1 = false
+help   = "Actual minus intended send time (open-loop). A growing lag means the generator or the network is saturated."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_target_rate"
+type   = "gauge"
+labels = []
+phase1 = false
+help   = "Configured messages/s (0 = closed loop)."
+
+[[loadgen]]
+group  = "Load generator"
+name   = "loadgen_thread_busy_ratio"
+type   = "gauge"
+labels = ["thread"]
+phase1 = false
+help   = "Fraction of time each generator thread was busy (self-check: a run is invalid above 0.9)."

@@ -1,0 +1,72 @@
+# Latency under a fixed offered load (open loop, coordinated-omission safe):
+# RTT quantiles of echo and request/response at increasing rates. The knee of
+# the p99 curve is the usable capacity. Needs the Phase 2 load generator.
+
+[[scenario]]
+name        = "latency-echo-100k"
+description = "Echo 200 B at 100k msg/s over 64 connections."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "echo"
+mode        = "open-loop"
+rate        = 100_000
+payload     = "fixed:200"
+connections = 64
+threads     = 4
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-7"
+
+[scenario.thresholds]
+"latency_ns.p99"  = 0.10
+"latency_ns.p999" = 0.20
+
+[[scenario]]
+name        = "latency-echo-1m"
+description = "Echo 200 B at 1M msg/s over 64 connections."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "echo"
+mode        = "open-loop"
+rate        = 1_000_000
+payload     = "fixed:200"
+connections = 64
+threads     = 8
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"latency_ns.p99"  = 0.10
+"latency_ns.p999" = 0.20
+
+[[scenario]]
+name        = "latency-reqresp-1m"
+description = "64 B request, 1 KiB response at 1M msg/s over 256 connections."
+duration_s  = 60
+warmup_s    = 10
+repeat      = 3
+
+[scenario.loadgen]
+type        = "req"
+mode        = "open-loop"
+rate        = 1_000_000
+payload     = "fixed:64"
+aux         = 1024
+connections = 256
+threads     = 8
+
+[scenario.local]
+server_cpus  = "0-3"
+loadgen_cpus = "4-11"
+
+[scenario.thresholds]
+"latency_ns.p99" = 0.10

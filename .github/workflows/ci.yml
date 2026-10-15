@@ -1,0 +1,38 @@
+# Thin wrapper: every step calls the CI-agnostic scripts in ci/ inside the
+# build image (ci/in-container.sh), exactly as on a developer machine.
+# See doc/ci.adoc. Not exercised until the repository is pushed to GitHub.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Stages run in the fresh checkout (an ephemeral runner is already clean).
+      WORKSPACE: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # the version-bump check needs the base branch history
+      - name: Pre-checks
+        run: ci/in-container.sh ci/run.sh pre-checks
+      - name: Build and test (asan)
+        run: ci/in-container.sh ci/run.sh build unit-test function-test
+      - name: Release build and benchmarks
+        run: ci/in-container.sh ci/run.sh build-release micro-bench perf-smoke
+      - name: Image, charts, dashboard, docs
+        run: ci/in-container.sh ci/run.sh image chart dashboard docs
+      - name: Package
+        run: ci/in-container.sh ci/run.sh package package-test summary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist/
+            results/

@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Server chart values",
+  "type": "object",
+  "required": [
+    "image",
+    "binaries",
+    "metricPrefix",
+    "workload",
+    "ports",
+    "service",
+    "performance",
+    "resources",
+    "monitoring"
+  ],
+  "definitions": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "nodePort": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 30000,
+      "maximum": 32767
+    },
+    "listener": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "port"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "$ref": "#/definitions/port"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Set by the umbrella chart's condition."
+    },
+    "global": {
+      "type": "object"
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "repository"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "binaries": {
+      "type": "object",
+      "required": [
+        "server",
+        "loadgen"
+      ],
+      "properties": {
+        "server": {
+          "type": "string",
+          "minLength": 1
+        },
+        "loadgen": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "metricPrefix": {
+      "type": "string",
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+    },
+    "workload": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "Deployment",
+            "StatefulSet"
+          ]
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "podManagementPolicy": {
+          "enum": [
+            "Parallel",
+            "OrderedReady"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ports": {
+      "type": "object",
+      "required": [
+        "tcp",
+        "udp",
+        "ws",
+        "admin"
+      ],
+      "properties": {
+        "tcp": {
+          "$ref": "#/definitions/listener"
+        },
+        "udp": {
+          "$ref": "#/definitions/listener"
+        },
+        "ws": {
+          "$ref": "#/definitions/listener"
+        },
+        "admin": {
+          "type": "object",
+          "required": [
+            "port"
+          ],
+          "properties": {
+            "port": {
+              "$ref": "#/definitions/port"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "extraArgs": {
+      "type": "array",
+      "items": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "extraEnv": {
+      "type": "array"
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "mountPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "content": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "externalTrafficPolicy": {
+          "enum": [
+            "",
+            "Cluster",
+            "Local"
+          ]
+        },
+        "nodePorts": {
+          "type": "object",
+          "properties": {
+            "tcp": {
+              "$ref": "#/definitions/nodePort"
+            },
+            "udp": {
+              "$ref": "#/definitions/nodePort"
+            },
+            "ws": {
+              "$ref": "#/definitions/nodePort"
+            }
+          },
+          "additionalProperties": false
+        },
+        "headless": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "performance": {
+      "type": "object",
+      "properties": {
+        "hostNetwork": {
+          "type": "boolean"
+        },
+        "guaranteedQoS": {
+          "type": "boolean"
+        },
+        "sysctls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hugepages2Mi": {
+          "type": "string"
+        },
+        "runtimeClassName": {
+          "type": "string"
+        },
+        "priorityClassName": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "requests"
+      ],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "required": [
+            "cpu",
+            "memory"
+          ]
+        },
+        "limits": {
+          "type": "object"
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "probes": {
+      "type": "object"
+    },
+    "serviceAccount": {
+      "type": "object"
+    },
+    "podAnnotations": {
+      "type": "object"
+    },
+    "podLabels": {
+      "type": "object"
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "topologySpreadConstraints": {
+      "type": "array"
+    },
+    "podDisruptionBudget": {
+      "type": "object"
+    },
+    "autoscaling": {
+      "type": "object"
+    },
+    "networkPolicy": {
+      "type": "object"
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "podMonitor": {
+          "type": "object"
+        },
+        "prometheusRule": {
+          "type": "object"
+        },
+        "dashboard": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

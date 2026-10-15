@@ -1,0 +1,55 @@
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros: true
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Inline
+AlwaysBreakTemplateDeclarations: No
+BraceWrapping:
+    AfterCaseLabel: false
+    AfterClass: false
+    AfterControlStatement: Never
+    AfterEnum: false
+    AfterFunction: false
+    AfterNamespace: false
+    AfterObjCDeclaration: false
+    AfterStruct: false
+    AfterUnion: false
+    AfterExternBlock: false
+    BeforeCatch: false
+    BeforeElse: true
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeComma
+Cpp11BracedListStyle: false
+FixNamespaceComments: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Project libraries, test/benchmark frameworks, POSIX/C headers, standard library.
+  - Regex:           '^<lib[a-z]+/'
+    Priority:        1
+  - Regex:           '^<(gtest|gmock|benchmark)/'
+    Priority:        2
+  - Regex:           '^<[a-z_/]+\.h>$'
+    Priority:        3
+  - Regex:           '^<[a-z_]+>$'
+    Priority:        4
+  - Regex:           '.*'
+    Priority:        5
+IndentCaseLabels: true
+IndentPPDirectives: AfterHash
+IndentWidth: 4
+Language: Cpp
+NamespaceIndentation: None
+PenaltyBreakTemplateDeclaration: 60
+PointerAlignment: Left
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true

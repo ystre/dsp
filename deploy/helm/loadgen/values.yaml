@@ -1,0 +1,94 @@
+# Load generator chart values (doc/deployment.adoc, "Load generator chart").
+# One release = one run: the Job runs `instances` generator pods in parallel;
+# tools/bench/run.py --target k8s installs it per repeat and reads the JSON
+# summary from the pod log.
+
+global:
+  image:
+    repository: ""
+    tag: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: localhost:5000/dsp
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+binaries:
+  loadgen: dsp-loadgen
+
+# Server address HOST:PORT. Empty: "<release>-server:7200", i.e. the server of
+# the same umbrella release.
+target: ""
+
+# Parallel generator pods (Indexed Job: each gets --instance <index>).
+instances: 1
+
+# One run of the load generator; keys are its contract CLI flags
+# (doc/loadgen.adoc, "CLI"). Values a generator does not support make it exit
+# with an error (see --capabilities).
+run:
+  transport: tcp
+  mode: closed-loop
+  type: data
+  connections: 1
+  threads: 1
+  rate: 0
+  payload: fixed:200
+  aux: 64
+  batch: 64
+  count: 1000000
+  duration: 0
+  warmup: 0
+  scenario: ""
+
+extraArgs: []
+
+metrics:
+  port: 9556
+  # Seconds the pod keeps serving metrics after the run, so Prometheus scrapes the final counters.
+  linger: 15
+  podMonitor:
+    enabled: true
+    interval: 5s
+    labels: {}
+
+job:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: null
+
+# Safe sysctl: fan-out runs open many connections from one pod IP.
+sysctls:
+  - name: net.ipv4.ip_local_port_range
+    value: "1024 65535"
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 64Mi
+  limits:
+    memory: 1Gi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+hostNetwork: false
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podLabels: {}
+podAnnotations: {}

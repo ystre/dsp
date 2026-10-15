@@ -1,0 +1,10 @@
+{{ include "server.fullname" . }} ({{ .Values.workload.kind }}, {{ .Values.workload.replicas }} replica(s)) is deployed.
+
+Data:    {{ include "server.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.ports.tcp.port }} (TCP)
+Admin:   :{{ .Values.ports.admin.port }}  /metrics /healthz /readyz
+
+Smoke test:   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+Benchmark:    tools/bench/run.py --target k8s --namespace {{ .Release.Namespace }} --release {{ .Release.Name }} --scenario smoke
+{{- if .Values.monitoring.dashboard.enabled }}
+Dashboard:    Grafana, "{{ .Values.binaries.server | trimSuffix "-server" }} server" (ConfigMap {{ include "server.fullname" . }}-dashboard)
+{{- end }}
