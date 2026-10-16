@@ -141,7 +141,11 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 16Mi
-      {{- with .Values.nodeSelector }}
+      {{- $nodeSelector := .Values.nodeSelector }}
+      {{- if ne .Values.placement.nodes "any" }}
+      {{- $nodeSelector = merge (dict (printf "node-role.kubernetes.io/%s" .Values.placement.nodes) "true") .Values.nodeSelector }}
+      {{- end }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}

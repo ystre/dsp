@@ -30,3 +30,13 @@ kafkaExporter:
 podMonitor:
   enabled: true
   interval: 5s
+
+# Every pod of the cluster (brokers and controllers, entity operator, Kafka
+# exporter), through Strimzi's pod templates. Strimzi has no nodeSelector: it
+# becomes required node affinity, added to `affinity`'s terms.
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

@@ -2,23 +2,27 @@
 # validated by values.schema.json.
 
 global:
-  # Set by the umbrella chart; override image.repository / image.tag when set.
+  # Set by the umbrella chart; override image.registry / image.tag (also of
+  # tests.image) when set.
   image:
-    repository: ""
+    registry: ""
     tag: ""
 
 nameOverride: ""
 # Resource names are "<release>-server" unless overridden.
 fullnameOverride: ""
 
+# <registry>/<repository>:<tag>; an empty registry leaves the repository as it is.
 image:
-  repository: localhost:5000/dsp
+  registry: oci-registry.internal.ystre.org:5000
+  repository: dsp-server
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Executables inside the image (named after project.env).
+# Executables inside the images (named after project.env): the server's, and
+# the load generator's for `helm test`.
 binaries:
   server: dsp-server
   loadgen: dsp-loadgen
@@ -125,6 +129,12 @@ serviceAccount:
 
 podAnnotations: {}
 podLabels: {}
+# Nodes of a role: any (the scheduler's choice), control-plane, or loadgen
+# (the lab's load generator nodes, doc/deployment.adoc "Multi-node lab"); a
+# nodeSelector on node-role.kubernetes.io/<role>, merged with `nodeSelector`.
+# The lab's install.sh picks control-plane unless told otherwise.
+placement:
+  nodes: any
 nodeSelector: {}
 tolerations: []
 affinity: {}
@@ -173,3 +183,9 @@ monitoring:
 tests:
   enabled: true
   count: 10000
+  # The load generator image (same registry and tag defaults as `image`).
+  image:
+    registry: oci-registry.internal.ystre.org:5000
+    repository: dsp-loadgen
+    tag: ""
+    pullPolicy: IfNotPresent

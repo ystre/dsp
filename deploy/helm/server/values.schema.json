@@ -64,6 +64,9 @@
         "repository"
       ],
       "properties": {
+        "registry": {
+          "type": "string"
+        },
         "repository": {
           "type": "string",
           "minLength": 1
@@ -310,6 +313,13 @@
     "podLabels": {
       "type": "object"
     },
+    "placement": {
+      "type": "object",
+      "properties": {
+        "nodes": { "enum": ["any", "control-plane", "loadgen"] }
+      },
+      "additionalProperties": false
+    },
     "nodeSelector": {
       "type": "object"
     },
@@ -355,6 +365,32 @@
         "count": {
           "type": "integer",
           "minimum": 1
+        },
+        "image": {
+          "type": "object",
+          "required": [
+            "repository"
+          ],
+          "properties": {
+            "registry": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

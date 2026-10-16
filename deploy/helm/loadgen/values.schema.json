@@ -12,6 +12,7 @@
       "type": "object",
       "required": ["repository"],
       "properties": {
+        "registry": { "type": "string" },
         "repository": { "type": "string", "minLength": 1 },
         "tag": { "type": "string" },
         "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
@@ -63,6 +64,11 @@
     "podSecurityContext": { "type": "object" },
     "securityContext": { "type": "object" },
     "hostNetwork": { "type": "boolean" },
+    "placement": {
+      "type": "object",
+      "properties": { "dedicatedNodes": { "type": "boolean" } },
+      "additionalProperties": false
+    },
     "nodeSelector": { "type": "object" },
     "tolerations": { "type": "array" },
     "affinity": { "type": "object" },

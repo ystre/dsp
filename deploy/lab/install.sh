@@ -5,10 +5,13 @@
 # (ci/deploy-test.sh, the package under test).
 #
 #   install.sh --chart <dir|.tgz> [--namespace <ns>] [--release <name>]
-#              [--image-repository <repo>] [--image-tag <tag>] [-- <helm args>...]
+#              [--image-registry <registry>] [--image-tag <tag>]
+#              [--server-nodes any|control-plane|loadgen] [-- <helm args>...]
 #
-# Defaults: namespace and release <project>, image IMAGE_REPOSITORY (default
-# localhost:5000/<project>) with the chart's appVersion as tag.
+# Defaults: namespace and release <project>, images from IMAGE_REGISTRY
+# (default oci-registry.internal.ystre.org:5000) with the chart's appVersion as tag,
+# the server on the control-plane node (server.placement.nodes; loadgen: the
+# load generator nodes, any: wherever the scheduler puts it).
 #
 # Does not install the platform: every kind the release renders must already be
 # served by the cluster (Prometheus Operator, Strimzi operator: platform.sh),
@@ -20,20 +23,22 @@
 source "$(dirname "$(realpath "$0")")/lib.sh"
 need helm kubectl
 
-chart="" ns="${PROJECT_NAME}" release="${PROJECT_NAME}" repo="${IMAGE_REPOSITORY}" tag=""
+chart="" ns="${PROJECT_NAME}" release="${PROJECT_NAME}" registry="${IMAGE_REGISTRY}" tag="" server_nodes=control-plane
 while (( $# )); do
     case "$1" in
         --chart)            chart="$2"; shift 2 ;;
         --namespace)        ns="$2"; shift 2 ;;
         --release)          release="$2"; shift 2 ;;
-        --image-repository) repo="$2"; shift 2 ;;
+        --image-registry)   registry="$2"; shift 2 ;;
         --image-tag)        tag="$2"; shift 2 ;;
+        --server-nodes)     server_nodes="$2"; shift 2 ;;
         --)                 shift; break ;;
         *)                  die "unknown argument: $1 (see the header of $0)" ;;
     esac
 done
 
 [[ -n "${chart}" ]] || die "--chart is required"
+[[ "${server_nodes}" =~ ^(any|control-plane|loadgen)$ ]] || die "--server-nodes: any, control-plane or loadgen, got '${server_nodes}'"
 [[ -e "${chart}" ]] || die "chart not found: ${chart}"
 
 if [[ -d "${chart}" ]]; then
@@ -42,8 +47,10 @@ fi
 
 tag="${tag:-$(chart_field "${chart}" appVersion)}"
 args=(--namespace "${ns}"
-      --set "global.image.repository=${repo}" --set "global.image.tag=${tag}"
-      --set server.image.pullPolicy=Always
+      --set "global.image.registry=${registry}" --set "global.image.tag=${tag}"
+      --set server.image.pullPolicy=Always --set server.tests.image.pullPolicy=Always
+      --set loadgen.image.pullPolicy=Always
+      --set "server.placement.nodes=${server_nodes}"
       "$@")
 
 log "Platform check for ${release} in ${ns}"
@@ -71,7 +78,7 @@ if [[ -n "${topics}" ]] && ! grep -q '^kind: Kafka$' <<< "${manifest}"; then
     echo "topics go to the Kafka cluster ${cluster_ns}/${cluster}"
 fi
 
-log "Release ${release} ($(chart_field "${chart}" name) $(chart_field "${chart}" version), image ${repo}:${tag}) in ${ns}"
+log "Release ${release} ($(chart_field "${chart}" name) $(chart_field "${chart}" version), images ${registry}/*:${tag}) in ${ns}"
 helm upgrade --install "${release}" "${chart}" "${args[@]}" --create-namespace \
     --wait --timeout "${INSTALL_TIMEOUT:-10m}"
 

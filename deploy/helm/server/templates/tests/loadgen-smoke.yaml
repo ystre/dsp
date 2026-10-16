@@ -15,8 +15,8 @@ spec:
     {{- toYaml .Values.podSecurityContext | nindent 4 }}
   containers:
     - name: loadgen
-      image: {{ include "server.image" . }}
-      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      image: {{ include "server.testImage" . }}
+      imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
       command: ["/usr/local/bin/{{ .Values.binaries.loadgen }}"]
       args:
         - --target

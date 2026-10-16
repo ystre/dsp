@@ -20,7 +20,13 @@
     "partitions": { "type": "integer", "minimum": 1 },
     "config": { "type": "object" },
     "kafkaExporter": { "type": "object" },
-    "podMonitor": { "type": "object" }
+    "podMonitor": { "type": "object" },
+    "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+    "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+    "tolerations": { "type": "array", "items": { "type": "object" } },
+    "affinity": { "type": "object" },
+    "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } }
   },
   "additionalProperties": false
 }

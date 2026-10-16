@@ -26,8 +26,8 @@ BUILD_DEBUG="${WORKSPACE}/build/debug"
 BUILD_RELEASE="${WORKSPACE}/build/release"
 DIST="${WORKSPACE}/dist"
 RESULTS="${WORKSPACE}/results"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-localhost:5000/${PROJECT_NAME}}"
-IMAGE="${IMAGE_REPOSITORY}:${VERSION}"
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-oci-registry.internal.ystre.org:5000}"
+IMAGES=(server loadgen)
 CHARTS=(server loadgen kafka deps umbrella)
 PY=(python3 -I)
 
@@ -35,6 +35,11 @@ stage() { printf '\n\033[1;34m=== Stage: %s ===\033[0m\n' "$*"; }
 info()  { printf '  %s\n' "$*"; }
 warn()  { printf '\033[33m  warning: %s\033[0m\n' "$*" >&2; }
 die()   { printf '\033[31m  error: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# image_ref <component>: the image of a component (server, loadgen).
+image_ref() {
+    printf '%s/%s-%s:%s\n' "${IMAGE_REGISTRY}" "${PROJECT_NAME}" "$1" "${VERSION}";
+}
 
 # have <tool>: true if available; otherwise fails (strict) or warns (lenient) and returns 1.
 have() {

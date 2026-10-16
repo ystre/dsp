@@ -52,8 +52,9 @@ helm test {project} -n {project}
 [cols="3,2,5",options="header"]
 |===
 | Value | Default | Meaning
-| `image.repository`, `image.tag`, `image.pullPolicy` | `localhost:5000/{project}`, appVersion, `IfNotPresent` | Image. `global.image.*` (umbrella) overrides.
-| `binaries.server`, `binaries.loadgen` | `{project}-server`, `{project}-loadgen` | Executables in the image.
+| `image.registry`, `image.repository`, `image.tag`, `image.pullPolicy` | `oci-registry.internal.ystre.org:5000`, `{project}-server`, appVersion, `IfNotPresent` | Server image `<registry>/<repository>:<tag>`. `global.image.registry` and `global.image.tag` (umbrella) override.
+| `tests.image.*` | `oci-registry.internal.ystre.org:5000`, `{project}-loadgen`, appVersion, `IfNotPresent` | Load generator image of `helm test`; the same `global.image.*` overrides.
+| `binaries.server`, `binaries.loadgen` | `{project}-server`, `{project}-loadgen` | Executables in the images.
 | `workload.kind` | `Deployment` | Or `StatefulSet` (stable pod names, headless Service).
 | `workload.replicas` | `1` |
 | `ports.tcp`, `ports.udp`, `ports.ws` | 7200 on; 7201, 7280 off | Listeners; UDP and WebSocket arrive with M3 and M4.
@@ -64,6 +65,7 @@ helm test {project} -n {project}
 | `service.headless` | `false` | Extra headless Service (always present for StatefulSets).
 | `performance.*` | off | <<deployment-tuning>>.
 | `resources` | 1 CPU, 128 Mi request; 1 Gi memory limit; *no CPU limit* | CFS throttling distorts latency; see Guaranteed QoS below.
+| `placement.nodes` | `any` | `control-plane` or `loadgen`: only nodes of that role (`node-role.kubernetes.io/<role>`), merged with `nodeSelector`. The lab picks `control-plane` (`up.sh --server-nodes`).
 | `podSecurityContext`, `securityContext` | non-root 65532, read-only root, no capabilities, `RuntimeDefault` seccomp |
 | `monitoring.podMonitor` | on, 5 s | Prometheus Operator `PodMonitor` on the admin port.
 | `monitoring.prometheusRule` | off | Recording rules (rates, reactor utilisation) and alerts (down, reactor saturated, protocol errors, rejections, backpressure).
@@ -97,6 +99,12 @@ contract's CLI flags, <<loadgen-cli>>). The pods serve `loadgen_*` metrics
 (PodMonitor) and linger `metrics.linger` seconds after the run for the final
 scrape. `target` defaults to `<release>-server:7200`. `tools/bench/run.py
 --target k8s` installs it once per repeat and reads the summary from the pod log.
+
+Its image is `<image.registry>/<image.repository>:<image.tag>`, by default
+`oci-registry.internal.ystre.org:5000/{project}-loadgen:<appVersion>` (`global.image.*` overrides).
+`placement.dedicatedNodes=true` (`run.py --loadgen-nodes`) confines the pods to
+the load generator nodes (<<deployment-nodes>>); without it they run on any
+node. `nodeSelector`, `tolerations` and `affinity` add to that.
 
 [[deployment-topics]]
 == Kafka: shared cluster and topics
@@ -141,6 +149,11 @@ cluster (a subchart of the dependencies chart) and as an optional dedicated
 cluster of a release (a subchart of the umbrella chart, off by default). It
 needs the Strimzi operator watching its namespace; the dependencies chart
 installs it watching every namespace.
+`podLabels`, `podAnnotations`, `nodeSelector`, `tolerations`, `affinity` and
+`topologySpreadConstraints` apply to every pod of the cluster (brokers and
+controllers, entity operator, exporter) through Strimzi's pod templates;
+Strimzi has no `nodeSelector`, so it becomes required node affinity, added to
+every term of `affinity`.
 
 [[deployment-deps]]
 == Dependencies chart (the platform)
@@ -157,13 +170,13 @@ What every release relies on, installed once per cluster, each part a toggle:
 
 `deploy/lab/platform.sh` installs it as release `platform` in namespace
 `platform` (`PLATFORM_NAMESPACE`, `PLATFORM_RELEASE`), together with the image
-registry, and waits for the shared Kafka cluster to be Ready. It is
+registry (<<deployment-registry>>), and waits for the shared Kafka cluster to be Ready. It is
 idempotent; extra helm arguments go after `--`. A component whose CRDs the cluster already serves
 from another release is left disabled and the existing installation is used;
 one that this release installed before stays enabled.
 
 [[deployment-lab]]
-== Lab (k3s, one node)
+== Lab (k3s)
 
 Two flows deploy the integration chart. Both use the same install step,
 `deploy/lab/install.sh`, and differ in what they deploy and where:
@@ -173,7 +186,7 @@ Two flows deploy the integration chart. Both use the same install step,
 | | Lab (`deploy/lab/up.sh`) | CI deploy test (`ci/deploy-test.sh`, <<ci>>)
 | Deploys | A released package: the CSAR (validated first) or a packaged chart. `--source`: the working tree. | The package under test: the integration chart in the workspace's `dist/`.
 | Namespace | `{project}` (`LAB_NAMESPACE`) | `{project}-ci` (`CI_DEPLOY_NAMESPACE`)
-| Image | The CSAR's own image if it carries one, else the local Docker image of the chart's `appVersion`; `--source` builds it. | The one the pipeline built.
+| Images | Per component (`{project}-server`, `{project}-loadgen`): the CSAR's own if it carries it, else the local Docker image of the chart's `appVersion`; `--source` builds them. | The ones the pipeline built.
 | Dashboard | Shipped with the release. | Off; the lab dashboard shows `{project}-ci` through its namespace selector.
 | Platform | Installs it if missing (`platform.sh`). | Must be there; never installs cluster-wide components.
 | Kafka topics | `{project}.<topic>`; kept by `down.sh` unless `--delete-topics`. | `{project}-ci.<run id>.<topic>`; deleted after a successful run, kept after a failure.
@@ -182,7 +195,7 @@ Two flows deploy the integration chart. Both use the same install step,
 
 [source,sh,subs="attributes+"]
 ----
-deploy/lab/platform.sh                  # registry on localhost:5000 + dependencies chart; once per cluster
+deploy/lab/platform.sh                  # registry (registry.sh up) + dependencies chart; once per cluster
 deploy/lab/up.sh                        # dist/{project}-<VERSION>.csar into namespace "{project}"
 deploy/lab/up.sh <file.csar|chart.tgz>  # another released package
 deploy/lab/up.sh --source               # the working tree (needs a release build: ci/run.sh build-release)
@@ -191,7 +204,7 @@ deploy/lab/down.sh [--namespace N] [--release R] [--delete-topics]
                                         # uninstall one release (topics, namespace, registry, platform stay)
 ----
 
-`install.sh --chart <dir|.tgz> [--namespace] [--release] [--image-repository]
+`install.sh --chart <dir|.tgz> [--namespace] [--release] [--image-registry]
 [--image-tag] [-- <helm args>]` renders the release first and stops if the
 cluster does not serve one of the kinds it renders (the platform is missing),
 or if the Kafka cluster its topics go to does not exist. Then it installs or
@@ -200,6 +213,157 @@ to be Ready. A chart directory gets its subcharts packaged
 first. The image tag defaults to the chart's `appVersion`.
 
 Grafana: `http://localhost:30300/d/{project}-server`.
+
+[[deployment-registry]]
+=== Lab registry
+
+The images go through the lab registry `oci-registry.internal.ystre.org:5000` (`IMAGE_REGISTRY`;
+the charts' `image.registry` default). `deploy/lab/registry.sh` runs it:
+
+* *Where*: a Deployment on the registry node (the control-plane node unless
+  moved, see below) with the host network, bound to the node's IPv4 address
+  only (not loopback, not container bridges). The data lives on that node
+  (local-path volume `registry-data`).
+* *Name*: under a domain of ours, so it cannot collide with a public name.
+  Containerd and Docker resolve it on the host, not through the cluster DNS,
+  so every machine needs it: `setup.sh` pins it in `/etc/hosts` (a marked
+  block), or, with `--dns`, relies on a DNS record (an `A` record to the
+  registry node, in the domain or in the LAN's DNS) and writes no hosts entry.
+  With the record, a move of the registry is a change of one record. Some
+  routers drop public DNS answers that carry private addresses (DNS rebinding
+  protection): then use the LAN's DNS, or the hosts entry. `--dns` checks that
+  the name resolves to the registry node, and leaves `/etc/hosts` as it was
+  otherwise.
+* *TLS*: 1.3 only. The certificate (ECDSA P-256, one year, `serverAuth`,
+  SAN `oci-registry.internal.ystre.org`) comes from a lab CA (ten years, path
+  length 0) that is *name-constrained* to that name: a machine that trusts it
+  trusts no other name. The CA is installed only where the registry is used:
+  `/etc/docker/certs.d/oci-registry.internal.ystre.org:5000/` for Docker,
+  `/etc/rancher/k3s/registries.yaml` for containerd; never in the system
+  trust store.
+* *Authentication*: HTTP basic (bcrypt htpasswd) for every request, pulls
+  included. Two accounts: `push` for `docker login` on the machines that
+  publish, `pull` for the nodes' containerd. The registry's htpasswd mode does
+  not tell them apart in what they may do; they are separate so that the
+  credential spread to every node rotates on its own.
+* *Pod*: non-root (65532), read-only root filesystem, no capabilities,
+  `RuntimeDefault` seccomp, no service account token; an init container with
+  only `CHOWN` hands an older root-owned data directory over. Images pinned
+  (`registry:3.0.0`, `busybox:1.37.0`).
+* *Secrets*: generated on the control-plane machine in
+  `~/.local/state/{project}-lab/registry` (`LAB_STATE_DIR`, owner-only): CA
+  key, registry key, passwords, htpasswd. The cluster holds the registry's
+  share only (Secrets `registry-tls`, `registry-auth`). Back the directory
+  up: without the CA key, every machine needs a new bundle.
+
+[source,sh]
+----
+deploy/lab/registry.sh up                    # CA, credentials, certificate (renewed 30 days ahead), deployment
+deploy/lab/registry.sh node-config <dir>     # setup bundle of a machine: CA, pull credentials, setup.sh
+sudo <dir>/setup.sh                          # on that machine: /etc/hosts, Docker CA, k3s registries.yaml
+deploy/lab/registry.sh login                 # docker login (push account)
+deploy/lab/registry.sh check                 # name, TLS, authentication, Docker trust and login
+deploy/lab/registry.sh status                # certificate validity, the node, the pod
+deploy/lab/registry.sh move <node>           # run it on another node; deletes its images
+----
+
+`platform.sh` runs `registry.sh up` every time, so the certificate is renewed
+before it expires (the pod rolls over when it, the htpasswd file or the HTTP
+secret changes). `up.sh` stops early when `registry.sh check` fails.
+
+First time on the control-plane machine (it is a node too, and the one that
+pushes):
+
+[source,sh]
+----
+deploy/lab/registry.sh up
+deploy/lab/registry.sh node-config ~/lab-bundle-$(hostname)
+sudo ~/lab-bundle-$(hostname)/setup.sh       # restarts k3s once to load registries.yaml; pods keep running
+deploy/lab/registry.sh login
+deploy/lab/registry.sh check
+----
+
+`setup.sh` runs as root on the target, needs no checkout, and is idempotent.
+It writes a marked block into `/etc/hosts` (none with `--dns`), and refuses to touch an existing
+`registries.yaml` that it did not write (it prints the block to merge by hand
+instead). A bundle holds the pull password (a join bundle also the cluster
+token): keep it private and delete it once used.
+
+Rotation::
+  certificate: automatic (`registry.sh up`); nothing to do on the machines,
+  they trust the CA. Pull password: delete `pull.password`, `registry.sh up`,
+  then a new bundle and `setup.sh` on every node. Push password: the same with
+  `push.password`, then `registry.sh login`. CA (every ten years, or if its key
+  leaks): move the state directory aside, `registry.sh up`, new bundles
+  everywhere.
+
+Moving the registry::
+  `registry.sh move <node>` runs it on another node of the cluster. The data volume is
+  local to the old node and is deleted with the images in it; push them again
+  (`up.sh --source`). The name, the certificate and the passwords stay, so the
+  machines keep trusting it; only the address changes. With a DNS record,
+  change the record; with hosts entries, a new bundle and `setup.sh` on every
+  machine. The registry node is recorded in the state directory (`node`).
+
+Limits:: the registry is reachable from the whole LAN (authenticated); limit
+  port 5000 to the lab's machines in the host firewall if the network is
+  shared. `docker login` stores the password base64-encoded in
+  `~/.docker/config.json` unless a credential helper is configured; the CI
+  build container (`ci/in-container.sh`) reads that file and cannot use a
+  helper. The registry node's address must stay fixed (a DHCP reservation):
+  the hosts entries or the DNS record hold it. IPv4 only: the registry binds
+  the node's IPv4 address, also on a dual-stack node.
+
+[[deployment-nodes]]
+=== Multi-node lab: load generator nodes
+
+The lab runs on one k3s node; more machines (a laptop, say) join it as k3s
+agents for the load generator, so that load and server do not share CPUs,
+caches and the loopback path.
+
+A load generator node is labelled `node-role.kubernetes.io/loadgen`. The label
+draws the load generator there when a run asks for it
+(`placement.dedicatedNodes=true`, `run.py --loadgen-nodes`); it keeps nothing
+away. The node is an ordinary node otherwise: the scheduler may place any
+workload on it, but the lab keeps two things on the control-plane node:
+
+* the platform (`platform.sh` installs it with `deploy/lab/platform-values.yaml`):
+  every pod but the per-node agents (node-exporter), since its volumes stay on
+  the node they were created on and a laptop may sleep. The shared Kafka gets
+  it through the Kafka chart's `nodeSelector` (node affinity in Strimzi's pod
+  templates). The registry runs on its own node anyway (<<deployment-registry>>);
+* the server, by default: `up.sh --server-nodes loadgen` puts it on the load
+  generator nodes instead, `any` wherever the scheduler likes
+  (`server.placement.nodes`).
+
+An earlier layout tainted these nodes; `nodes.sh loadgen` removes that taint.
+
+[source,sh]
+----
+deploy/lab/nodes.sh join ~/lab-join-laptop   # bundle: registry setup + k3s join (reads the k3s token with sudo)
+scp -r ~/lab-join-laptop laptop:             # a trusted channel: the bundle holds the join token
+ssh -t laptop sudo ./lab-join-laptop/setup.sh [--node-ip <LAN address>] [--dns]
+#   registry trust and credentials first, then the k3s agent (cluster's version)
+deploy/lab/nodes.sh loadgen <node>   # label it as a load generator node
+deploy/lab/nodes.sh status           # nodes, roles, taints
+python3 -I tools/bench/run.py --target k8s --scenario smoke --loadgen-nodes
+deploy/lab/nodes.sh remove <node>    # drain and delete it; then k3s-agent-uninstall.sh on the node
+----
+
+The new node must reach the control plane on 6443/tcp, and the nodes each
+other on 8472/udp (flannel VXLAN) and 10250/tcp (kubelet, for logs and exec).
+On a machine with several interfaces (Wi-Fi and Ethernet, VPN), pin the
+address with `--node-ip` (and `--flannel-iface`). A node that sleeps or leaves
+the network goes `NotReady`; a run scheduled there fails, the rest of the lab
+is unaffected.
+
+The node pulls from the lab registry like every other (<<deployment-registry>>):
+the join bundle's `setup.sh` adds the name, the CA and the pull credentials
+before the agent starts.
+
+Measurements across machines include the network between them (Wi-Fi in the
+laptop case): latency figures from such runs compare only with runs on the
+same pair of nodes and link (<<bench-host>>).
 
 == Dashboard
 

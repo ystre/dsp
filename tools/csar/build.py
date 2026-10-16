@@ -2,12 +2,13 @@
 """Build the ETSI NFV SOL004 VNF package (CSAR) of the project.
 
     build.py --chart dist/charts/<umbrella>-<ver>.tgz [--out dist]
-             [--image-tar image.tar] [--sign-key key.pem --sign-cert cert.pem]
+             [--image-tar server=server.tar --image-tar loadgen=loadgen.tar]
+             [--sign-key key.pem --sign-cert cert.pem]
 
 Layout (doc/packaging.adoc): TOSCA-Metadata/TOSCA.meta, Definitions/ (the
 VNFD rendered from csar/Definitions/vnfd.yaml.tpl plus the vendored SOL001
 types), Artifacts/Deployment/HELM/ (the MCIOP), optionally
-Artifacts/Images/, Files/ (change log, licenses, tests) and the manifest
+Artifacts/Images/<project>-<component>-<ver>.tar, Files/ (change log, licenses, tests) and the manifest
 <project>.mf with a SHA-256 digest of every file.
 
 Signing (optional): SOL004 option 1 - a CMS signature of the manifest,
@@ -64,7 +65,10 @@ def sha256(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
-def sw_image_artifact(image: pathlib.Path, target: str) -> str:
+COMPONENTS = ("server", "loadgen")
+
+
+def sw_image_artifact(image: pathlib.Path, target: str, component: str) -> str:
     """OsContainer `sw_image` artifact for an image bundled in the package."""
     size_mib = max(1, image.stat().st_size >> 20)
     return f"""      artifacts:
@@ -72,7 +76,7 @@ def sw_image_artifact(image: pathlib.Path, target: str) -> str:
           type: tosca.artifacts.nfv.SwImage
           file: {target}
           properties:
-            name: {project.name()}
+            name: {project.name()}-{component}
             version: "{project.version()}"
             checksum:
               algorithm: sha-256
@@ -117,13 +121,20 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--chart", required=True, help="packaged integration chart (.tgz)")
     ap.add_argument("--out", default=str(project.ROOT / "dist"))
-    ap.add_argument("--image-tar", help="container image archive (docker save) to bundle")
+    ap.add_argument("--image-tar", action="append", default=[], metavar="COMPONENT=FILE",
+                    help=f"container image archive (docker save) of a component ({', '.join(COMPONENTS)}) to bundle")
     ap.add_argument("--sign-key")
     ap.add_argument("--sign-cert")
     ap.add_argument("--suffix", default="", help="appended to the file name, e.g. '-signed'")
     args = ap.parse_args()
     if bool(args.sign_key) != bool(args.sign_cert):
         ap.error("--sign-key and --sign-cert go together")
+    images = {}
+    for spec in args.image_tar:
+        component, sep, path = spec.partition("=")
+        if not sep or component not in COMPONENTS or component in images:
+            ap.error(f"--image-tar {spec!r}: expected COMPONENT=FILE, COMPONENT one of {', '.join(COMPONENTS)}, each once")
+        images[component] = pathlib.Path(path)
 
     name, version, vendor = project.name(), project.version(), project.env()["VENDOR"]
     chart = pathlib.Path(args.chart)
@@ -140,18 +151,21 @@ def main() -> int:
         (stage / "Artifacts" / "Deployment" / "HELM").mkdir(parents=True)
 
         shutil.copy2(chart, stage / "Artifacts" / "Deployment" / "HELM" / chart.name)
-        sw_image = ""
-        if args.image_tar:
-            image = pathlib.Path(args.image_tar)
-            target = f"Artifacts/Images/{name}-{version}.tar"
-            (stage / "Artifacts" / "Images").mkdir(parents=True)
-            shutil.copy2(image, stage / target)
-            sw_image = sw_image_artifact(image, target)
+        sw_images = {}
+        for component in COMPONENTS:
+            sw_images[component] = ""
+            if component in images:
+                target = f"Artifacts/Images/{name}-{component}-{version}.tar"
+                (stage / "Artifacts" / "Images").mkdir(parents=True, exist_ok=True)
+                shutil.copy2(images[component], stage / target)
+                sw_images[component] = sw_image_artifact(images[component], target, component)
 
         values = {
             "PROJECT_NAME": name, "VENDOR": vendor, "VERSION": version,
             "DESCRIPTOR_ID": descriptor_id, "HELM_CHART": chart.name,
-            "VNFM_INFO": f"etsivnfm:v{sol001_version()}", "SW_IMAGE_ARTIFACT": sw_image.rstrip("\n"),
+            "VNFM_INFO": f"etsivnfm:v{sol001_version()}",
+            "SERVER_IMAGE_ARTIFACT": sw_images["server"].rstrip("\n"),
+            "LOADGEN_IMAGE_ARTIFACT": sw_images["loadgen"].rstrip("\n"),
             "CERTIFICATE_ENTRY": f"ETSI-Entry-Certificate: {cert_name}" if args.sign_key else "",
         }
         (stage / "Definitions" / "vnfd.yaml").write_text(render(CSAR_SRC / "Definitions" / "vnfd.yaml.tpl", values))

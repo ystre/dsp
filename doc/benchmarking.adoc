@@ -91,6 +91,7 @@ Before running, the runner asks the load generator for its capabilities
 python3 -I tools/bench/run.py --list --bin-dir build/release/bin
 python3 -I tools/bench/run.py --scenario smoke --bin-dir build/release/bin            # local
 python3 -I tools/bench/run.py --scenario smoke --target k8s --namespace {project} --release {project}
+python3 -I tools/bench/run.py --scenario smoke --target k8s --loadgen-nodes   # generator on a load generator node
 python3 -I tools/bench/compare.py results/<baseline-run> results/<candidate-run>
 python3 -I tools/bench/report.py results/<run>... --output doc/results/<name>.adoc
 ----

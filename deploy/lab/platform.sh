@@ -2,10 +2,13 @@
 #
 # Installs the platform once per cluster, everything the lab and the CI deploy
 # test share. Idempotent: running it again upgrades the release.
-#   * the image registry on localhost:5000 (registry.yaml, namespace registry);
+#   * the lab registry IMAGE_REGISTRY (registry.sh: TLS, authentication;
+#     namespace registry);
 #   * the dependencies chart (Prometheus Operator, Prometheus, Grafana,
 #     node-exporter; Strimzi operator watching every namespace; the shared
-#     Kafka cluster) as release "platform" in namespace "platform".
+#     Kafka cluster) as release "platform" in namespace "platform", every pod
+#     on the control-plane node but node-exporter (platform-values.yaml; helm
+#     args after `--` override it).
 #
 #   platform.sh [--chart <dir|.tgz>] [-- <helm args>...]   default: deploy/helm/deps
 #
@@ -16,7 +19,7 @@
 #   PLATFORM_NAMESPACE, PLATFORM_RELEASE   default: platform
 
 source "$(dirname "$(realpath "$0")")/lib.sh"
-need helm kubectl curl
+need helm kubectl curl openssl
 
 chart="${PROJECT_DIR}/deploy/helm/deps"
 if [[ "${1:-}" == --chart ]]; then chart="${2:?--chart needs a path}"; shift 2; fi
@@ -24,15 +27,11 @@ if [[ "${1:-}" == --chart ]]; then chart="${2:?--chart needs a path}"; shift 2; 
 ns="${PLATFORM_NAMESPACE:-platform}"
 release="${PLATFORM_RELEASE:-platform}"
 
-log "Registry (localhost:5000)"
-if curl --silent --fail --max-time 2 http://localhost:5000/v2/ >/dev/null; then
-    echo "already running"
-else
-    kubectl create namespace registry --dry-run=client -o yaml | kubectl apply -f -
-    kubectl apply -f "${LAB_DIR}/registry.yaml"
-    kubectl -n registry rollout status deploy/registry --timeout=180s
-    until curl --silent --fail --max-time 2 http://localhost:5000/v2/ >/dev/null; do sleep 1; done
-fi
+"${LAB_DIR}/registry.sh" up
+log "This machine and the registry"
+
+"${LAB_DIR}/registry.sh" check \
+    || warn "this machine cannot push to or pull from ${IMAGE_REGISTRY} yet (the platform itself does not need it)"
 
 # Values of the existing release (empty JSON if there is none).
 current="$(helm get values "${release}" --namespace "${ns}" --all --output json 2>/dev/null || echo '{}')"
@@ -59,6 +58,7 @@ if [[ -d "${chart}" ]]; then
     package_own_subcharts "${chart}"
 fi
 helm upgrade --install "${release}" "${chart}" --namespace "${ns}" --create-namespace \
+    --values "${LAB_DIR}/platform-values.yaml" \
     --set "kube-prometheus-stack.enabled=${monitoring}" \
     --set "strimzi-kafka-operator.enabled=${kafka_operator}" \
     "$@" --wait --timeout "${PLATFORM_TIMEOUT:-10m}"

@@ -11,9 +11,10 @@
 # from the dependencies chart (deploy/lab/platform.sh), installed once.
 
 global:
+  # Registry and tag of every image of the release (<project>-server,
+  # <project>-loadgen); empty = each subchart's own default.
   image:
-    # Shared by the server and the load generator (one image holds both).       TODO: Split this into two images.
-    repository: localhost:5000/dsp
+    registry: oci-registry.internal.ystre.org:5000
     tag: ""
 
 server:

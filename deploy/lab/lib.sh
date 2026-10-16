@@ -10,8 +10,16 @@ PROJECT_DIR="$(realpath "${LAB_DIR}/../..")"
 # shellcheck source=../../project.env
 source "${PROJECT_DIR}/project.env"
 VERSION="$(< "${PROJECT_DIR}/VERSION")"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-localhost:5000/${PROJECT_NAME}}"
+# The lab registry (registry.sh): HOST:PORT, TLS and authentication required.
+export IMAGE_REGISTRY="${IMAGE_REGISTRY:-oci-registry.internal.ystre.org:5000}"
+REGISTRY_HOST="${IMAGE_REGISTRY%:*}"
+REGISTRY_PORT="${IMAGE_REGISTRY##*:}"
+IMAGES=(server loadgen)
 PY=(python3 -I)
+
+# Secrets of the lab that live outside the cluster (registry CA key, passwords).
+# Owner-only; back it up, the cluster cannot recreate it.
+LAB_STATE_DIR="${LAB_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/${PROJECT_NAME}-lab}"
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[31merror: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -19,6 +27,19 @@ die() { printf '\033[31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 need() {
     local tool
     for tool in "$@"; do command -v "${tool}" >/dev/null || die "${tool} is required"; done
+}
+
+warn() { printf '\033[33mwarning: %s\033[0m\n' "$*" >&2; }
+
+# control_plane <jsonpath>: a field of the (first) control-plane node.
+control_plane() {
+    kubectl get nodes --selector node-role.kubernetes.io/control-plane=true --output "jsonpath={.items[0].$1}"
+}
+
+# node_ipv4 <node>: the node's internal IPv4 address (a dual-stack node lists an IPv6 one too).
+node_ipv4() {
+    kubectl get node "$1" --output "jsonpath={.status.addresses[?(@.type=='InternalIP')].address}" \
+        | tr ' ' '\n' | grep -m 1 -E '^[0-9]+(\.[0-9]+){3}$' || true
 }
 
 # chart_field <chart dir|.tgz> <field>: a top-level Chart.yaml field (version, appVersion, name).

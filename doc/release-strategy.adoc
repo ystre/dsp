@@ -27,7 +27,7 @@ once in `tools/release-paths.sh`:
 * the contracts (`contract`);
 * the charts (`deploy/helm`);
 * the CSAR sources (`csar`);
-* the runtime image (`env/runtime.Dockerfile`).
+* the runtime images (`env/runtime.Dockerfile`: server and load generator).
 
 Documentation, tests, tools, CI and benchmark scenarios are not
 release-relevant. `ci/check-version-bump.sh` (pre-checks) fails a branch that

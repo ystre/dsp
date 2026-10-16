@@ -44,13 +44,13 @@ tools/workspace-usage.sh                  # space taken by the accumulated e2e w
 | `build-release` | Optimised build (`-O3 -march=x86-64-v3`, static libstdc++, debug info kept for splitting).
 | `micro-bench` | Every `bench-*` with repetitions; compared with `bench/baselines/micro/` (warning only unless `CI_PERF_GATE=1`).
 | `perf-smoke` | `tools/bench/run.py --scenario smoke` on the release build; compared with `bench/baselines/smoke.json`; AsciiDoc report in the result directory.
-| `image` | Runtime image (`env/runtime.Dockerfile`, distroless) with the release binaries; smoke-runs both binaries in it. `IMAGE_PUSH=1` pushes.
+| `image` | Runtime images (`env/runtime.Dockerfile`, distroless), one per binary: `<registry>/{project}-server` and `<registry>/{project}-loadgen`; smoke-runs each binary in its image. `IMAGE_PUSH=1` pushes.
 | `chart` | Chart dependencies, strict lint of all charts, rendering with defaults and with every option on (also validates `values.schema.json`), and a negative schema check.
 | `dashboard` | The committed dashboard equals the generator's output and uses contract metrics only.
 | `docs` | The generated metrics table is up to date; the book renders without warnings (`dist/doc/book.html`).
 | `package` | `dist/`: charts, binary and debug-info archives, the CSAR, `SHA256SUMS` (<<packaging>>).
 | `package-test` | Checksums; CSAR validation, unsigned and signed with a throwaway certificate; the binary archive runs.
-| `deploy-test` | Opt-in (`CI_DEPLOY=1`): pushes the image, installs the packaged umbrella chart into its own namespace of the current kube context with the lab's install step (<<deployment-lab>>), `helm test`, the smoke scenario on Kubernetes, uninstall. Needs the platform (`deploy/lab/platform.sh`); never installs it. Its Kafka topics (`<project>-ci.<run id>.<topic>`, label `ci-run`) are deleted after a successful run and kept after a failure; topics kept by earlier runs are listed as a warning (<<deployment-topics>>).
+| `deploy-test` | Opt-in (`CI_DEPLOY=1`): pushes the images, installs the packaged umbrella chart into its own namespace of the current kube context with the lab's install step (<<deployment-lab>>), `helm test`, the smoke scenario on Kubernetes, uninstall. Needs the platform (`deploy/lab/platform.sh`); never installs it. Its Kafka topics (`<project>-ci.<run id>.<topic>`, label `ci-run`) are deleted after a successful run and kept after a failure; topics kept by earlier runs are listed as a warning (<<deployment-topics>>).
 | `summary` | Lists artifacts and results.
 | `tag-release` | Not part of `e2e.sh` (it only reports `--check`); see <<release>>.
 |===
@@ -67,8 +67,8 @@ tools/workspace-usage.sh                  # space taken by the accumulated e2e w
 | `CI_MICRO_THRESHOLD` | Relative threshold for micro-benchmarks (default 0.15).
 | `CI_DEPLOY`, `CI_DEPLOY_NAMESPACE`, `CI_DEPLOY_KEEP` | Deploy test: enable, namespace (default `<project>-ci`), keep the release and its topics.
 | `CI_RUN_ID` | Run identifier (default: the UTC start time, `<yyyymmdd>-<hhmmss>Z`): the e2e workspace name and part of the deploy test's topic names.
-| `IMAGE_REPOSITORY`, `IMAGE_PUSH` | Image name (default `localhost:5000/<project>`); push after building.
-| `CSAR_WITH_IMAGES` | `1`: bundle the runtime image in the CSAR.
+| `IMAGE_REGISTRY`, `IMAGE_PUSH` | Registry of the images (default `oci-registry.internal.ystre.org:5000`, the lab registry, <<deployment-registry>>); push after building. Pushing needs Docker to trust the registry and be logged in (`deploy/lab/registry.sh check`); `ci/in-container.sh` passes `~/.docker/config.json` through.
+| `CSAR_WITH_IMAGES` | `1`: bundle the runtime images in the CSAR.
 | `CI_BASE_REF` | Base for the version-bump check (default `origin/$GITHUB_BASE_REF`, `origin/master`, `master`).
 |===
 

@@ -20,9 +20,14 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- end -}}
 
 {{- define "loadgen.image" -}}
-{{- $repo := default .Values.image.repository .Values.global.image.repository -}}
-{{- $tag := default (default .Chart.AppVersion .Values.image.tag) .Values.global.image.tag -}}
-{{- printf "%s:%s" $repo $tag -}}
+{{- $global := default dict .Values.global.image -}}
+{{- $registry := default .Values.image.registry $global.registry -}}
+{{- $tag := default (default .Chart.AppVersion .Values.image.tag) $global.tag -}}
+{{- if $registry -}}
+{{- printf "%s/%s:%s" $registry .Values.image.repository $tag -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository $tag -}}
+{{- end -}}
 {{- end -}}
 
 {{/* A CLI argument value: whole numbers without exponent (YAML numbers arrive as float64). */}}

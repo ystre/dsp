@@ -18,8 +18,8 @@
 #   CI_DEPLOY_KEEP=1     keep the release (and the topics) afterwards
 #   CI_RUN_ID            default: the UTC time; ci/e2e.sh sets it (the workspace name)
 #
-# The image is pushed to IMAGE_REPOSITORY (default localhost:5000/<project>,
-# the lab registry).
+# The images are pushed to IMAGE_REGISTRY (default oci-registry.internal.ystre.org:5000, the lab
+# registry; Docker must trust it and be logged in: deploy/lab/registry.sh check).
 
 source "$(dirname "$(realpath "$0")")/lib.sh"
 # shellcheck source=deploy-test/topics.sh
@@ -41,7 +41,11 @@ run_id="${CI_RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
 
 topics_report_kept "${ns}"
 
-docker push --quiet "${IMAGE}"
+for component in "${IMAGES[@]}"; do
+    docker push --quiet "$(image_ref "${component}")" \
+        || die "pushing to ${IMAGE_REGISTRY} failed (deploy/lab/registry.sh check)"
+done
+
 info "deploying ${chart} as ${release} into ${ns} ($(kubectl config current-context)), run ${run_id}"
 
 finish() {
@@ -60,10 +64,10 @@ mapfile -t topic_args < <(topics_helm_args "${ns}" "${run_id}")
 
 "${WORKSPACE}/deploy/lab/install.sh" \
     --chart "${chart}" --namespace "${ns}" --release "${release}" \
-    --image-repository "${IMAGE_REPOSITORY}" --image-tag "${VERSION}" \
+    --image-registry "${IMAGE_REGISTRY}" --image-tag "${VERSION}" \
     -- --set server.monitoring.dashboard.enabled=false "${topic_args[@]}"
 
 helm test "${release}" --namespace "${ns}" --logs
 "${PY[@]}" "${WORKSPACE}/tools/bench/run.py" --target k8s --namespace "${ns}" --release "${release}" \
     --scenario smoke --repeat 1 --bin-dir "${BUILD_RELEASE}/bin" --out "${RESULTS}" \
-    --image-repository "${IMAGE_REPOSITORY}" --image-tag "${VERSION}" --image-pull-policy Always
+    --image-registry "${IMAGE_REGISTRY}" --image-tag "${VERSION}" --image-pull-policy Always

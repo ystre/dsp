@@ -12,7 +12,8 @@ Targets:
   k8s     Installs the load generator chart (deploy/helm/loadgen) as a Job
           against a deployed server release, collects the generator's summary
           from the pod logs and the server metrics through the API server's pod
-          proxy. Needs kubectl and helm pointing at the cluster.
+          proxy. Needs kubectl and helm pointing at the cluster. --loadgen-nodes
+          confines the generator to the load generator nodes (deploy/lab/nodes.sh).
 
 Output (doc/benchmarking.adoc, "Results"):
   env.json                 host snapshot (tools/bench/sysinfo.py)
@@ -244,8 +245,9 @@ def run_k8s(args, sc: dict, out: pathlib.Path) -> list[dict]:
         before = k8s_server_metrics(ns, release)
         cmd = ["helm", "install", job_release, str(project.ROOT / "deploy" / "helm" / "loadgen"), "-n", ns,
                "--set", f"target={target}", "--set-json", f"run={json.dumps(run_values)}",
-               "--set", f"image.repository={args.image_repository}", "--set", f"image.tag={args.image_tag}",
-               "--set", f"image.pullPolicy={args.image_pull_policy}"]
+               "--set", f"image.registry={args.image_registry}", "--set", f"image.tag={args.image_tag}",
+               "--set", f"image.pullPolicy={args.image_pull_policy}",
+               "--set", f"placement.dedicatedNodes={str(args.loadgen_nodes).lower()}"]
         log(f"repeat {n + 1}/{sc['repeat']}: {' '.join(cmd)}")
         subprocess.run(cmd, check=True, capture_output=True)
         job = f"job/{job_release}-loadgen"
@@ -318,9 +320,12 @@ def main() -> int:
     ap.add_argument("--server-admin", help="admin HOST:PORT of a running server (local target)")
     ap.add_argument("--namespace", default=project.name())
     ap.add_argument("--release", default=project.name(), help="Helm release of the deployed server (k8s)")
-    ap.add_argument("--image-repository", default=f"localhost:5000/{project.name()}")
+    ap.add_argument("--image-registry", default="oci-registry.internal.ystre.org:5000",
+                    help="registry of the load generator image <project>-loadgen (k8s)")
     ap.add_argument("--image-tag", default=project.version())
     ap.add_argument("--image-pull-policy", default="IfNotPresent", choices=("Always", "IfNotPresent", "Never"))
+    ap.add_argument("--loadgen-nodes", action="store_true",
+                    help="run the load generator on the load generator nodes only (k8s)")
     ap.add_argument("--capabilities", help="load generator capabilities JSON file (k8s; default: ask the local binary)")
     ap.add_argument("--repeat", type=int, help="override the scenario's repeat count")
     ap.add_argument("--out", default=str(project.ROOT / "results"))

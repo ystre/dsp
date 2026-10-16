@@ -20,10 +20,24 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- end -}}
 
+{{/* "<registry>/<repository>:<tag>" of an image value (dict "image" <value> "root" .); global.image overrides. */}}
+{{- define "server.imageRef" -}}
+{{- $global := default dict .root.Values.global.image -}}
+{{- $registry := default .image.registry $global.registry -}}
+{{- $tag := default (default .root.Chart.AppVersion .image.tag) $global.tag -}}
+{{- if $registry -}}
+{{- printf "%s/%s:%s" $registry .image.repository $tag -}}
+{{- else -}}
+{{- printf "%s:%s" .image.repository $tag -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "server.image" -}}
-{{- $repo := default .Values.image.repository .Values.global.image.repository -}}
-{{- $tag := default (default .Chart.AppVersion .Values.image.tag) .Values.global.image.tag -}}
-{{- printf "%s:%s" $repo $tag -}}
+{{- include "server.imageRef" (dict "image" .Values.image "root" .) -}}
+{{- end -}}
+
+{{- define "server.testImage" -}}
+{{- include "server.imageRef" (dict "image" .Values.tests.image "root" .) -}}
 {{- end -}}
 
 {{- define "server.serviceAccountName" -}}

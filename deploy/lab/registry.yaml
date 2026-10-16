@@ -1,14 +1,23 @@
-# Local OCI registry for images built on the host (from the o1 lab).
-# Namespace `registry` must exist (deploy/lab/platform.sh creates it).
+# Lab OCI registry (from the o1 lab), applied by deploy/lab/registry.sh, which fills in the
+# __PLACEHOLDERS__ and creates the Secrets it mounts. Do not apply it by hand.
 #
-# hostNetwork makes it reachable as localhost:5000 both from the host's Docker daemon (push) and
-# from k3s' containerd (pull). Both treat `localhost` registries as plain HTTP, so no TLS or
-# /etc/rancher/k3s/registries.yaml changes (which would need root) are required.
+#   * Reachable from every machine of the lab as <REGISTRY_HOST>:<port> (IMAGE_REGISTRY,
+#     default oci-registry.internal.ystre.org:5000): host network on the registry node (the
+#     control-plane node unless moved: registry.sh move), bound to that node's address only
+#     (not to loopback, not to container bridges). Pinned there, where its data (local-path
+#     volume) lives.
+#   * TLS only (1.3), with a certificate of the lab CA (registry.sh: name-constrained to the
+#     registry's host name, so trusting it trusts nothing else). Basic authentication from
+#     an htpasswd file (bcrypt) for every request, pull included.
+#   * Runs as non-root with a read-only root filesystem and no capabilities; the init
+#     container hands an older (root-owned) data directory over to that user.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: registry
   namespace: registry
+  labels:
+    app: registry
 spec:
   replicas: 1
   strategy:
@@ -20,33 +29,134 @@ spec:
     metadata:
       labels:
         app: registry
+      annotations:
+        # Certificate, htpasswd and HTTP secret: a change rolls the pod (registry.sh).
+        registry.sh/secrets-checksum: "__CHECKSUM__"
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      containers:
-        - name: registry
-          image: registry:2
-          env:
-            - name: REGISTRY_HTTP_ADDR
-              value: "127.0.0.1:5000"
-            - name: REGISTRY_STORAGE_DELETE_ENABLED
-              value: "true"
+      nodeSelector:
+        kubernetes.io/hostname: "__NODE__"
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Group of the mounted Secret files (mode 0440).
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: data-owner
+          image: busybox:1.37.0
+          command:
+            - sh
+            - -c
+            - find /var/lib/registry \( ! -user 65532 -o ! -group 65532 \) -exec chown -h 65532:65532 {} +
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, DAC_READ_SEARCH]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           volumeMounts:
             - name: data
               mountPath: /var/lib/registry
+      containers:
+        - name: registry
+          image: registry:3.0.0
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: REGISTRY_HTTP_ADDR
+              value: "$(HOST_IP):__PORT__"
+            - name: REGISTRY_HTTP_TLS_CERTIFICATE
+              value: /certs/tls.crt
+            - name: REGISTRY_HTTP_TLS_KEY
+              value: /certs/tls.key
+            - name: REGISTRY_HTTP_TLS_MINIMUMTLS
+              value: tls1.3
+            # Signs upload state; fixed so that uploads survive a restart.
+            - name: REGISTRY_HTTP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: registry-auth
+                  key: http-secret
+            - name: REGISTRY_AUTH
+              value: htpasswd
+            - name: REGISTRY_AUTH_HTPASSWD_REALM
+              value: lab registry
+            - name: REGISTRY_AUTH_HTPASSWD_PATH
+              value: /auth/htpasswd
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+            # Distribution 3 exports traces over OTLP by default; there is no collector.
+            - name: OTEL_TRACES_EXPORTER
+              value: none
+          ports:
+            - name: registry
+              containerPort: __PORT__
+          readinessProbe:
+            tcpSocket:
+              port: registry
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: registry
+            periodSeconds: 20
+            failureThreshold: 3
           resources:
             requests:
               cpu: 50m
               memory: 64Mi
-          readinessProbe:
-            httpGet:
-              host: 127.0.0.1
-              path: /v2/
-              port: 5000
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+            - name: tls
+              mountPath: /certs
+              readOnly: true
+            - name: auth
+              mountPath: /auth
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: registry-data
+        - name: tls
+          secret:
+            secretName: registry-tls
+            defaultMode: 0440
+        - name: auth
+          secret:
+            secretName: registry-auth
+            defaultMode: 0440
+            items:
+              - key: htpasswd
+                path: htpasswd
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

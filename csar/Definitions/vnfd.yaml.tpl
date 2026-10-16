@@ -82,6 +82,7 @@ topology_template:
       type: tosca.nodes.nfv.Mciop
       requirements:
         - associatedVdu: server
+        - associatedVdu: loadgen
       artifacts:
         helm_chart:
           type: tosca.artifacts.nfv.HelmChart
@@ -103,12 +104,33 @@ topology_template:
       type: tosca.nodes.nfv.Vdu.OsContainer
       properties:
         name: server
-        description: The server process; the same image also holds the load generator.
+        description: The server process (image ${PROJECT_NAME}-server).
         # Milli-CPUs; Guaranteed QoS with integer CPUs is a Helm value (performance.guaranteedQoS).
         requested_cpu_resources: 1000
         requested_memory_resources: 128 MiB
         memory_resource_limit: 1 GiB
-${SW_IMAGE_ARTIFACT}
+${SERVER_IMAGE_ARTIFACT}
+
+    loadgen:
+      type: tosca.nodes.nfv.Vdu.OsContainerDeployableUnit
+      properties:
+        name: loadgen
+        description: Optional load generator run (a Kubernetes Job; off by default).
+        vdu_profile:
+          min_number_of_instances: 0
+          max_number_of_instances: 64
+      requirements:
+        - container: loadgen_container
+
+    loadgen_container:
+      type: tosca.nodes.nfv.Vdu.OsContainer
+      properties:
+        name: loadgen
+        description: The load generator process (image ${PROJECT_NAME}-loadgen).
+        requested_cpu_resources: 1000
+        requested_memory_resources: 64 MiB
+        memory_resource_limit: 1 GiB
+${LOADGEN_IMAGE_ARTIFACT}
     data_cp:
       type: tosca.nodes.nfv.VirtualCp
       properties:

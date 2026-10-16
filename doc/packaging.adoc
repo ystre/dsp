@@ -15,8 +15,11 @@ dist/
   SHA256SUMS
 ----
 
-The runtime image `localhost:5000/{project}:<ver>` (`ci/image.sh`) is distroless
-(`gcr.io/distroless/cc-debian13:nonroot`) and holds both binaries. Everything
+The runtime images `oci-registry.internal.ystre.org:5000/{project}-server:<ver>` and
+`oci-registry.internal.ystre.org:5000/{project}-loadgen:<ver>` (`ci/image.sh`, one target each in
+`env/runtime.Dockerfile`) are distroless
+(`gcr.io/distroless/cc-debian13:nonroot`) and hold one binary each, so the
+load generator ships and scales independently of the server. Everything
 except glibc is linked statically.
 
 [[csar]]
@@ -34,7 +37,7 @@ chart. It is built by `tools/csar/build.py` from `csar/` and checked by
   Definitions/vnfd.yaml                the VNFD (rendered from csar/Definitions/vnfd.yaml.tpl)
   Definitions/etsi_nfv_sol001_common_types.yaml, etsi_nfv_sol001_vnfd_types.yaml   vendored ETSI types
   Artifacts/Deployment/HELM/{project}-<ver>.tgz   the MCIOP: integration chart, subcharts vendored
-  Artifacts/Images/{project}-<ver>.tar            optional (CSAR_WITH_IMAGES=1)
+  Artifacts/Images/{project}-server-<ver>.tar, {project}-loadgen-<ver>.tar   optional (CSAR_WITH_IMAGES=1)
   Files/ChangeLog.txt  Files/Licenses/  Files/Tests/  [Files/Certificates/{project}.cert]
   {project}.mf                                    manifest: metadata + SHA-256 of every file [+ CMS signature]
 ----
@@ -60,9 +63,10 @@ ETSI-Entry-Certificate: Files/Certificates/{project}.cert     (signed packages o
 |===
 | Node template | Type | Content
 | `vnf` | `<vendor>.{project}.VNF` (derived from `tosca.nodes.nfv.VNF`) | Descriptor id (UUIDv5 of vendor, product and version: stable per release), provider, product name, software version, `vnfm_info`, one deployment flavour `default`, the `Vnflcm` interface.
-| `mciop` | `tosca.nodes.nfv.Mciop` | The Helm chart artifact (`tosca.artifacts.nfv.HelmChart`), associated with the `server` VDU.
+| `mciop` | `tosca.nodes.nfv.Mciop` | The Helm chart artifact (`tosca.artifacts.nfv.HelmChart`), associated with the `server` and `loadgen` VDUs.
 | `server` | `tosca.nodes.nfv.Vdu.OsContainerDeployableUnit` | The server pods; 1 to 8 instances.
-| `server_container` | `tosca.nodes.nfv.Vdu.OsContainer` | CPU and memory requests and limits (matching the chart defaults); the image as a `SwImage` artifact when bundled.
+| `server_container` | `tosca.nodes.nfv.Vdu.OsContainer` | CPU and memory requests and limits (matching the chart defaults); the server image as a `SwImage` artifact when bundled.
+| `loadgen`, `loadgen_container` | `OsContainerDeployableUnit`, `OsContainer` | The optional load generator Job (0 to 64 instances); its resources and, when bundled, its image.
 | `data_cp`, `admin_cp` | `tosca.nodes.nfv.VirtualCp` | Exposed ports: tcp 7200, udp 7201, ws 7280; admin 9555 with its paths.
 |===
 
@@ -124,9 +128,9 @@ own onboarding validation before a delivery.
 === Deploying a package
 
 `deploy/lab/up.sh <package>.csar` validates the package, takes the chart out
-of it and, if the package carries an image, loads and pushes that image, then
-installs the release (<<deployment-lab>>). `tools/csar/extract.py` does the
-extraction (`chart OUT_DIR`, `image` to stdout).
+of it and loads and pushes each image the package carries, then installs the
+release (<<deployment-lab>>). `tools/csar/extract.py` does the extraction
+(`chart OUT_DIR`, `image COMPONENT` to stdout).
 
 === Reproducibility
 

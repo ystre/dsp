@@ -4,15 +4,19 @@
 # summary from the pod log.
 
 global:
+  # Set by the umbrella chart; override image.registry / image.tag when set.
   image:
-    repository: ""
+    registry: ""
     tag: ""
 
 nameOverride: ""
 fullnameOverride: ""
 
+# <registry>/<repository>:<tag>; an empty registry leaves the repository as it is.
 image:
-  repository: localhost:5000/dsp
+  registry: oci-registry.internal.ystre.org:5000
+  repository: dsp-loadgen
+  # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -87,6 +91,10 @@ securityContext:
     drop: [ALL]
 
 hostNetwork: false
+
+placement:
+  dedicatedNodes: false
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

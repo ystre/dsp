@@ -69,7 +69,11 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-      {{- with .Values.nodeSelector }}
+      {{- $nodeSelector := .Values.nodeSelector }}
+      {{- if .Values.placement.dedicatedNodes }}
+      {{- $nodeSelector = merge (dict "node-role.kubernetes.io/loadgen" "true") .Values.nodeSelector }}
+      {{- end }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}

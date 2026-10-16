@@ -1,5 +1,6 @@
 {{- $k := .Values }}
 {{- $rf := min (int $k.replicas) 3 }}
+{{- $pod := include "kafka.podTemplate" . }}
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
@@ -24,6 +25,11 @@ spec:
   jvmOptions:
     "-Xms": {{ $k.heap }}
     "-Xmx": {{ $k.heap }}
+  {{- with $pod }}
+  template:
+    pod:
+      {{- . | trim | nindent 6 }}
+  {{- end }}
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: Kafka
@@ -61,10 +67,20 @@ spec:
           - "kafka_controller.*"
   entityOperator:
     topicOperator: {}
+    {{- with $pod }}
+    template:
+      pod:
+        {{- . | trim | nindent 8 }}
+    {{- end }}
   {{- if $k.kafkaExporter.enabled }}
   kafkaExporter:
     topicRegex: {{ $k.kafkaExporter.topicRegex | quote }}
     groupRegex: {{ $k.kafkaExporter.groupRegex | quote }}
+    {{- with $pod }}
+    template:
+      pod:
+        {{- . | trim | nindent 8 }}
+    {{- end }}
   {{- end }}
 {{- if $k.podMonitor.enabled }}
 ---

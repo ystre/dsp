@@ -6,7 +6,7 @@
 #   <project>-<ver>-debug.tar.gz         debug info in the .build-id layout (baldr-cpp)
 #   <project>-<ver>.csar                 ETSI SOL004 package (tools/csar/build.py)
 #   SHA256SUMS
-# CSAR_WITH_IMAGES=1 bundles the runtime image (needs docker and ci/image.sh).
+# CSAR_WITH_IMAGES=1 bundles the runtime images (needs docker and ci/image.sh).
 #
 # Expects a clean workspace (ci/e2e.sh); intermediate files go to a fresh
 # directory under build/.
@@ -43,9 +43,12 @@ info "binaries and debug info archived"
 # VNF package.
 csar_args=(--chart "${DIST}/charts/${PROJECT_NAME}-${VERSION}.tgz" --out "${DIST}")
 if [[ "${CSAR_WITH_IMAGES:-0}" == 1 ]] && have docker; then
-    docker save "${IMAGE}" -o "${scratch}/image.tar"
-    csar_args+=(--image-tar "${scratch}/image.tar")
+    for component in "${IMAGES[@]}"; do
+        docker save "$(image_ref "${component}")" -o "${scratch}/${component}.tar"
+        csar_args+=(--image-tar "${component}=${scratch}/${component}.tar")
+    done
 fi
+
 "${PY[@]}" tools/csar/build.py "${csar_args[@]}" >/dev/null
 info "csar: ${PROJECT_NAME}-${VERSION}.csar"
 

@@ -52,7 +52,7 @@ deploy/grafana/        dashboard generator
 deploy/lab/            platform, install step, lab bring-up (shared with the CI deploy test)
 csar/                  ETSI SOL004 package sources
 ci/                    CI stages (CI-agnostic shell scripts)
-env/                   build image, runtime image, Conan profile
+env/                   build image, runtime images, Conan profile
 doc/                   this book
 ----
 
@@ -64,7 +64,7 @@ tools/configure.sh build/release Release && cmake --build build/release
 BIN_DIR=build/release/bin tests/run.sh                       # functional tests
 python3 -I tools/bench/run.py --scenario smoke --bin-dir build/release/bin
 ci/e2e.sh                                                    # the whole pipeline on a clean copy
-deploy/lab/up.sh                                             # k3s lab: image, charts, helm test
+deploy/lab/up.sh                                             # k3s lab: images, charts, helm test
 ----
 
 Grafana (lab): `http://localhost:30300/d/{project}-server`.

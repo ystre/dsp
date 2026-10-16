@@ -9,7 +9,8 @@
       "properties": {
         "image": {
           "type": "object",
-          "properties": { "repository": { "type": "string" }, "tag": { "type": "string" } }
+          "properties": { "registry": { "type": "string" }, "tag": { "type": "string" } },
+          "additionalProperties": false
         }
       }
     },

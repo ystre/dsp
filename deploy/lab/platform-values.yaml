@@ -1,0 +1,42 @@
+# The lab's platform (platform.sh): every pod on the control-plane node, where
+# the lab keeps state (local-path volumes stay on the node they were created
+# on) and stays up. Other nodes (deploy/lab/nodes.sh: the laptop) take any
+# other workload, but may sleep or leave. Only per-node agents run on every
+# node (node-exporter: their metrics are the point).
+kube-prometheus-stack:
+  prometheusOperator:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: "true"
+    admissionWebhooks:
+      deployment:
+        nodeSelector:
+          node-role.kubernetes.io/control-plane: "true"
+      patch:
+        nodeSelector:
+          node-role.kubernetes.io/control-plane: "true"
+  prometheus:
+    prometheusSpec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+  alertmanager:
+    alertmanagerSpec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+  thanosRuler:
+    thanosRulerSpec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+  grafana:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: "true"
+  kube-state-metrics:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: "true"
+
+strimzi-kafka-operator:
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: "true"
+
+kafka:
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: "true"
