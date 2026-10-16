@@ -129,10 +129,10 @@ serviceAccount:
 
 podAnnotations: {}
 podLabels: {}
-# Nodes of a role: any (the scheduler's choice), control-plane, or loadgen
-# (the lab's load generator nodes, doc/deployment.adoc "Multi-node lab"); a
-# nodeSelector on node-role.kubernetes.io/<role>, merged with `nodeSelector`.
-# The lab's install.sh picks control-plane unless told otherwise.
+# Nodes of a role: any (the scheduler's choice), platform or loadgen (the
+# lab's node roles, doc/deployment.adoc "Multi-node lab"); a nodeSelector on
+# node-role.kubernetes.io/<role>=true, merged with `nodeSelector`. The lab's
+# install.sh picks platform unless told otherwise.
 placement:
   nodes: any
 nodeSelector: {}

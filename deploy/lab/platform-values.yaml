@@ -1,42 +1,42 @@
-# The lab's platform (platform.sh): every pod on the control-plane node, where
-# the lab keeps state (local-path volumes stay on the node they were created
-# on) and stays up. Other nodes (deploy/lab/nodes.sh: the laptop) take any
+# The lab's platform (platform.sh): every pod on the platform node (label
+# node-role.kubernetes.io/platform, nodes.sh platform), where the lab keeps
+# state (local-path volumes stay on the node they were created on) and stays up. Other nodes (deploy/lab/nodes.sh: the laptop) take any
 # other workload, but may sleep or leave. Only per-node agents run on every
 # node (node-exporter: their metrics are the point).
 kube-prometheus-stack:
   prometheusOperator:
     nodeSelector:
-      node-role.kubernetes.io/control-plane: "true"
+      node-role.kubernetes.io/platform: "true"
     admissionWebhooks:
       deployment:
         nodeSelector:
-          node-role.kubernetes.io/control-plane: "true"
+          node-role.kubernetes.io/platform: "true"
       patch:
         nodeSelector:
-          node-role.kubernetes.io/control-plane: "true"
+          node-role.kubernetes.io/platform: "true"
   prometheus:
     prometheusSpec:
       nodeSelector:
-        node-role.kubernetes.io/control-plane: "true"
+        node-role.kubernetes.io/platform: "true"
   alertmanager:
     alertmanagerSpec:
       nodeSelector:
-        node-role.kubernetes.io/control-plane: "true"
+        node-role.kubernetes.io/platform: "true"
   thanosRuler:
     thanosRulerSpec:
       nodeSelector:
-        node-role.kubernetes.io/control-plane: "true"
+        node-role.kubernetes.io/platform: "true"
   grafana:
     nodeSelector:
-      node-role.kubernetes.io/control-plane: "true"
+      node-role.kubernetes.io/platform: "true"
   kube-state-metrics:
     nodeSelector:
-      node-role.kubernetes.io/control-plane: "true"
+      node-role.kubernetes.io/platform: "true"
 
 strimzi-kafka-operator:
   nodeSelector:
-    node-role.kubernetes.io/control-plane: "true"
+    node-role.kubernetes.io/platform: "true"
 
 kafka:
   nodeSelector:
-    node-role.kubernetes.io/control-plane: "true"
+    node-role.kubernetes.io/platform: "true"

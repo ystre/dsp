@@ -6,12 +6,12 @@
 #
 #   install.sh --chart <dir|.tgz> [--namespace <ns>] [--release <name>]
 #              [--image-registry <registry>] [--image-tag <tag>]
-#              [--server-nodes any|control-plane|loadgen] [-- <helm args>...]
+#              [--server-nodes any|platform|loadgen] [-- <helm args>...]
 #
 # Defaults: namespace and release <project>, images from IMAGE_REGISTRY
 # (default oci-registry.internal.ystre.org:5000) with the chart's appVersion as tag,
-# the server on the control-plane node (server.placement.nodes; loadgen: the
-# load generator nodes, any: wherever the scheduler puts it).
+# the server on the platform node (server.placement.nodes; loadgen: the load
+# generator nodes, any: wherever the scheduler puts it).
 #
 # Does not install the platform: every kind the release renders must already be
 # served by the cluster (Prometheus Operator, Strimzi operator: platform.sh),
@@ -23,7 +23,7 @@
 source "$(dirname "$(realpath "$0")")/lib.sh"
 need helm kubectl
 
-chart="" ns="${PROJECT_NAME}" release="${PROJECT_NAME}" registry="${IMAGE_REGISTRY}" tag="" server_nodes=control-plane
+chart="" ns="${PROJECT_NAME}" release="${PROJECT_NAME}" registry="${IMAGE_REGISTRY}" tag="" server_nodes=platform
 while (( $# )); do
     case "$1" in
         --chart)            chart="$2"; shift 2 ;;
@@ -38,7 +38,10 @@ while (( $# )); do
 done
 
 [[ -n "${chart}" ]] || die "--chart is required"
-[[ "${server_nodes}" =~ ^(any|control-plane|loadgen)$ ]] || die "--server-nodes: any, control-plane or loadgen, got '${server_nodes}'"
+[[ "${server_nodes}" =~ ^(any|platform|loadgen)$ ]] || die "--server-nodes: any, platform or loadgen, got '${server_nodes}'"
+if [[ "${server_nodes}" != any ]] && [[ -z "$(nodes_with_role "node-role.kubernetes.io/${server_nodes}")" ]]; then
+    die "--server-nodes ${server_nodes}: no node is labelled node-role.kubernetes.io/${server_nodes}=true (platform.sh labels the platform node; nodes.sh loadgen <node>)"
+fi
 [[ -e "${chart}" ]] || die "chart not found: ${chart}"
 
 if [[ -d "${chart}" ]]; then

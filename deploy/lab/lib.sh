@@ -36,6 +36,27 @@ control_plane() {
     kubectl get nodes --selector node-role.kubernetes.io/control-plane=true --output "jsonpath={.items[0].$1}"
 }
 
+# Node roles of the lab (labels set from here: a node may not give itself a
+# node-role.kubernetes.io/ label). The platform node runs the platform (and,
+# by default, the server and the registry); load generator nodes run the load
+# generator when a run asks for them (nodes.sh).
+PLATFORM_ROLE="node-role.kubernetes.io/platform"
+LOADGEN_ROLE="node-role.kubernetes.io/loadgen"
+
+# nodes_with_role <label>: the names of the nodes that carry <label>=true, one per line.
+nodes_with_role() {
+    kubectl get nodes --selector "$1=true" --output 'jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}'
+}
+
+# platform_node: the node labelled for the platform; empty if none is (yet).
+platform_node() {
+    local nodes
+    nodes="$(nodes_with_role "${PLATFORM_ROLE}")"
+    (( $(grep -c . <<< "${nodes}") <= 1 )) \
+        || die "several nodes are labelled ${PLATFORM_ROLE}: $(paste -sd ' ' <<< "${nodes}"); the platform keeps its data on one (nodes.sh platform <node>)"
+    echo "${nodes}"
+}
+
 # node_ipv4 <node>: the node's internal IPv4 address (a dual-stack node lists an IPv6 one too).
 node_ipv4() {
     kubectl get node "$1" --output "jsonpath={.status.addresses[?(@.type=='InternalIP')].address}" \

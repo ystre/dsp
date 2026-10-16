@@ -2,13 +2,17 @@
 #
 # Installs the platform once per cluster, everything the lab and the CI deploy
 # test share. Idempotent: running it again upgrades the release.
+#   * the platform node: the node labelled node-role.kubernetes.io/platform
+#     (nodes.sh platform <node>); on the first run, the control-plane node gets
+#     the label. The platform's volumes stay on the node they were created on:
+#     it stops if one is elsewhere (after a move of the label);
 #   * the lab registry IMAGE_REGISTRY (registry.sh: TLS, authentication;
 #     namespace registry);
 #   * the dependencies chart (Prometheus Operator, Prometheus, Grafana,
 #     node-exporter; Strimzi operator watching every namespace; the shared
 #     Kafka cluster) as release "platform" in namespace "platform", every pod
-#     on the control-plane node but node-exporter (platform-values.yaml; helm
-#     args after `--` override it).
+#     on the platform node but node-exporter (platform-values.yaml; helm args
+#     after `--` override it).
 #
 #   platform.sh [--chart <dir|.tgz>] [-- <helm args>...]   default: deploy/helm/deps
 #
@@ -26,6 +30,32 @@ if [[ "${1:-}" == --chart ]]; then chart="${2:?--chart needs a path}"; shift 2; 
 [[ "${1:-}" == -- ]] && shift
 ns="${PLATFORM_NAMESPACE:-platform}"
 release="${PLATFORM_RELEASE:-platform}"
+
+log "Platform node (${PLATFORM_ROLE})"
+node="$(platform_node)"
+if [[ -z "${node}" ]]; then
+    node="$(control_plane metadata.name)"
+    [[ -n "${node}" ]] || die "no control-plane node to label; label one: deploy/lab/nodes.sh platform <node>"
+    kubectl label node "${node}" "${PLATFORM_ROLE}=true"
+    echo "no node had the label: ${node} (the control-plane node) is the platform node from now on"
+else
+    echo "${node}"
+fi
+
+# Volumes of the platform elsewhere: their pods would wait for that node forever.
+hostname="$(kubectl get node "${node}" --output 'jsonpath={.metadata.labels.kubernetes\.io/hostname}')"
+stranded="$(kubectl get pvc --namespace "${ns}" --ignore-not-found \
+        --output 'jsonpath={range .items[*]}{.metadata.name}{" "}{.spec.volumeName}{"\n"}{end}' \
+    | while read -r claim volume; do
+        [[ -n "${volume}" ]] || continue
+        at="$(kubectl get pv "${volume}" --ignore-not-found \
+            --output 'jsonpath={.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]}')"
+        [[ -z "${at}" || "${at}" == "${hostname}" ]] || echo "${claim} (on ${at})"
+    done)"
+if [[ -n "${stranded}" ]]; then
+    printf '  %s\n' "${stranded}" >&2
+    die "these volumes of ${ns} are not on the platform node ${node}; move the label back (nodes.sh platform <node>), or give up their data: kubectl delete pvc --namespace ${ns} <claim>... (with the pods using them), then run this again"
+fi
 
 "${LAB_DIR}/registry.sh" up
 log "This machine and the registry"

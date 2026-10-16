@@ -9,9 +9,9 @@
 #                       default dist/<project>-<VERSION>.csar
 #   up.sh --source      the working tree: builds and pushes the images
 #                       (needs a release build), installs deploy/helm/umbrella
-#   --server-nodes <n>  where the server runs: control-plane (default),
-#                       loadgen (the load generator nodes, e.g. the laptop)
-#                       or any (install.sh)
+#   --server-nodes <n>  where the server runs: platform (default), loadgen
+#                       (the load generator nodes, e.g. the laptop) or any
+#                       (install.sh)
 #
 # Steps (each idempotent): the platform (platform.sh: the registry, operators,
 # monitoring), a check that this machine can push to the registry
@@ -30,12 +30,12 @@ need kubectl helm docker
 
 ns="${LAB_NAMESPACE:-${PROJECT_NAME}}"
 release="${LAB_RELEASE:-${PROJECT_NAME}}"
-source_tree=0 package="" server_nodes=control-plane
+source_tree=0 package="" server_nodes=platform
 
 while (( $# )); do
     case "$1" in
         --source)       source_tree=1; shift ;;
-        --server-nodes) server_nodes="${2:?--server-nodes needs any, control-plane or loadgen}"; shift 2 ;;
+        --server-nodes) server_nodes="${2:?--server-nodes needs any, platform or loadgen}"; shift 2 ;;
         --)             shift; break ;;
         -*)             die "unknown argument: $1 (see the header of $0)" ;;
         *)              [[ -z "${package}" ]] || die "one package only: ${package}, $1"; package="$1"; shift ;;

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Load generator nodes of the lab cluster (doc/deployment.adoc, "Multi-node
-# lab"): extra k3s agents, e.g. a laptop, where the load generator runs when
-# asked to (placement.dedicatedNodes, run.py --loadgen-nodes), so that it does
-# not share CPUs with the server.
+# Nodes of the lab cluster and their roles (doc/deployment.adoc, "Multi-node
+# lab"): the platform node, which runs the platform (and, by default, the
+# server and the registry), and load generator nodes, extra k3s agents (e.g. a
+# laptop) where the load generator runs when asked to (placement.dedicatedNodes,
+# run.py --loadgen-nodes), so that it does not share CPUs with the server.
 #
 #   nodes.sh join <dir>      writes the setup bundle of a new node into the new
 #                            directory <dir>: registry trust and credentials,
@@ -11,21 +12,24 @@
 #                            run its setup.sh on the node
 #   nodes.sh loadgen <node>  makes a joined node a load generator node: label
 #                            node-role.kubernetes.io/loadgen
+#   nodes.sh platform <node> makes <node> the platform node: label
+#                            node-role.kubernetes.io/platform, taken from the
+#                            previous one (platform.sh gives it to the
+#                            control-plane node on its first run)
 #   nodes.sh status          the nodes, their roles and taints
 #   nodes.sh remove <node>   drains and deletes a node from the cluster
 #
 # Run on the control-plane machine (or anywhere kubectl points at the cluster;
 # `join` needs the token file of the k3s server, K3S_TOKEN_FILE).
 #
-# The label only attracts the load generator when it asks for these nodes; it
-# keeps nothing away: they are ordinary nodes for every other workload. It is
-# set here, not by the agent: the NodeRestriction admission plugin does not let
-# a node give itself node-role.kubernetes.io/ labels.
+# The labels only attract what asks for them; they keep nothing away: every
+# node takes any other workload. They are set here, not by the agents: the
+# NodeRestriction admission plugin does not let a node give itself
+# node-role.kubernetes.io/ labels.
 
 source "$(dirname "$(realpath "$0")")/lib.sh"
 need kubectl
 
-ROLE="node-role.kubernetes.io/loadgen"
 K3S_TOKEN_FILE="${K3S_TOKEN_FILE:-/var/lib/rancher/k3s/server/node-token}"
 
 usage() { sed -n '/^#   nodes.sh/p' "$0" >&2; exit 1; }
@@ -71,24 +75,52 @@ EOT
 loadgen() {
     local node="${1:?usage: nodes.sh loadgen <node>}"
     kubectl get node "${node}" >/dev/null
-    [[ -z "$(kubectl get node "${node}" --output "jsonpath={.metadata.labels.node-role\.kubernetes\.io/control-plane}")" ]] \
-        || die "${node} is the control-plane node; the server runs there"
-    kubectl label node "${node}" "${ROLE}=true" --overwrite
+    [[ "${node}" != "$(platform_node)" ]] \
+        || die "${node} is the platform node; the platform and, by default, the server run there"
+    kubectl label node "${node}" "${LOADGEN_ROLE}=true" --overwrite
     # The taint of earlier lab layouts kept everything else off the node.
-    if kubectl get node "${node}" --output 'jsonpath={.spec.taints[*].key}' | grep -qwF "${ROLE}"; then
-        kubectl taint node "${node}" "${ROLE}-"
+    if kubectl get node "${node}" --output 'jsonpath={.spec.taints[*].key}' | grep -qwF "${LOADGEN_ROLE}"; then
+        kubectl taint node "${node}" "${LOADGEN_ROLE}-"
     fi
     status
 }
 
+platform() {
+    local node="${1:?usage: nodes.sh platform <node>}" current answer
+    kubectl get node "${node}" >/dev/null
+    current="$(platform_node)"
+    if [[ "${node}" == "${current}" ]]; then
+        echo "${node} is the platform node already"
+        return
+    fi
+    [[ "$(kubectl get node "${node}" --output 'jsonpath={.metadata.labels.node-role\.kubernetes\.io/loadgen}')" != true ]] \
+        || die "${node} is a load generator node; the platform runs elsewhere"
+    if [[ -n "${current}" ]]; then
+        cat <<EOT
+The platform moves from ${current} to ${node}. Its volumes (Prometheus history,
+the shared Kafka's data) stay on ${current}: platform.sh then stops until they
+are deleted, with their data, or the label moves back. The registry stays
+where it is (registry.sh move). The server follows on its next install
+(placement platform).
+EOT
+        read -r -p "Continue? [y/N] " answer
+        [[ "${answer}" == [yY] ]] || die "aborted"
+        kubectl label node "${current}" "${PLATFORM_ROLE}-"
+    fi
+    kubectl label node "${node}" "${PLATFORM_ROLE}=true" --overwrite
+    echo "Next: deploy/lab/platform.sh"
+    status
+}
+
 status() {
-    kubectl get nodes --label-columns "${ROLE}" --output wide
+    kubectl get nodes --label-columns "${PLATFORM_ROLE},${LOADGEN_ROLE}" --output wide
     echo
     kubectl get nodes --output 'custom-columns=NODE:.metadata.name,TAINTS:.spec.taints[*].key'
 }
 
 remove() {
     local node="${1:?usage: nodes.sh remove <node>}"
+    [[ "${node}" != "$(platform_node)" ]] || die "${node} is the platform node; make another one the platform node first (nodes.sh platform)"
     log "Drain and delete ${node}"
     kubectl drain "${node}" --ignore-daemonsets --delete-emptydir-data --timeout=120s
     kubectl delete node "${node}"
@@ -98,6 +130,7 @@ remove() {
 case "${1:-}" in
     join)    join "${2:-}" ;;
     loadgen) loadgen "${2:-}" ;;
+    platform) platform "${2:-}" ;;
     status)  status ;;
     remove)  remove "${2:-}" ;;
     *)       usage ;;

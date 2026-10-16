@@ -2,8 +2,8 @@
 #
 # The lab registry (doc/deployment.adoc, "Lab registry"): IMAGE_REGISTRY,
 # default oci-registry.internal.ystre.org:5000, on one node of the cluster
-# (the control-plane node unless moved); TLS and basic authentication for
-# every request.
+# (the platform node, or the control-plane node before there is one, unless
+# moved); TLS and basic authentication for every request.
 #
 #   registry.sh up                 creates what is missing (CA, credentials,
 #                                  certificate; renews the certificate 30 days
@@ -29,7 +29,8 @@
 #   pull.password         for the nodes' containerd (registries.yaml)
 #   htpasswd, http.secret what the registry mounts (Secret registry-auth)
 #   node                  the node the registry runs on (`up` records the
-#                         control-plane node; `move` changes it)
+#                         platform node, or the control-plane node; `move`
+#                         changes it)
 #
 # The registry's htpasswd authentication does not restrict what an
 # authenticated user may do: both accounts can push. They are separate so
@@ -145,12 +146,15 @@ need_state() {
 # Cluster
 # ------------------------------------------------------------------------------
 
-# registry_node: the node the registry runs on (and its data lives on).
+# registry_node: the node the registry runs on (and its data lives on): the
+# recorded one; before the first `up`, the platform node or the control-plane node.
 registry_node() {
+    local node
     if [[ -s "${STATE}/node" ]]; then
         cat "${STATE}/node"
     else
-        control_plane metadata.name
+        node="$(platform_node)"
+        echo "${node:-$(control_plane metadata.name)}"
     fi
 }
 

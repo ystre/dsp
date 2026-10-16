@@ -65,7 +65,7 @@ helm test {project} -n {project}
 | `service.headless` | `false` | Extra headless Service (always present for StatefulSets).
 | `performance.*` | off | <<deployment-tuning>>.
 | `resources` | 1 CPU, 128 Mi request; 1 Gi memory limit; *no CPU limit* | CFS throttling distorts latency; see Guaranteed QoS below.
-| `placement.nodes` | `any` | `control-plane` or `loadgen`: only nodes of that role (`node-role.kubernetes.io/<role>`), merged with `nodeSelector`. The lab picks `control-plane` (`up.sh --server-nodes`).
+| `placement.nodes` | `any` | `platform` or `loadgen`: only nodes of that role (`node-role.kubernetes.io/<role>=true`, <<deployment-nodes>>), merged with `nodeSelector`. The lab picks `platform` (`up.sh --server-nodes`).
 | `podSecurityContext`, `securityContext` | non-root 65532, read-only root, no capabilities, `RuntimeDefault` seccomp |
 | `monitoring.podMonitor` | on, 5 s | Prometheus Operator `PodMonitor` on the admin port.
 | `monitoring.prometheusRule` | off | Recording rules (rates, reactor utilisation) and alerts (down, reactor saturated, protocol errors, rejections, backpressure).
@@ -251,8 +251,8 @@ Grafana: `http://localhost:30300/d/{project}-server`.
 The images go through the lab registry `oci-registry.internal.ystre.org:5000` (`IMAGE_REGISTRY`;
 the charts' `image.registry` default). `deploy/lab/registry.sh` runs it:
 
-* *Where*: a Deployment on the registry node (the control-plane node unless
-  moved, see below) with the host network, bound to the node's IPv4 address
+* *Where*: a Deployment on the registry node (the platform node unless moved,
+  see below) with the host network, bound to the node's IPv4 address
   only (not loopback, not container bridges). The data lives on that node
   (local-path volume `registry-data`).
 * *Name*: under a domain of ours, so it cannot collide with a public name.
@@ -352,22 +352,33 @@ The lab runs on one k3s node; more machines (a laptop, say) join it as k3s
 agents for the load generator, so that load and server do not share CPUs,
 caches and the loopback path.
 
-A load generator node is labelled `node-role.kubernetes.io/loadgen`. The label
-draws the load generator there when a run asks for it
-(`placement.dedicatedNodes=true`, `run.py --loadgen-nodes`); it keeps nothing
-away. The node is an ordinary node otherwise: the scheduler may place any
-workload on it, but the lab keeps two things on the control-plane node:
+Placement goes by node roles of the lab's own, labels
+`node-role.kubernetes.io/<role>=true` (shown under ROLES in `kubectl get nodes`),
+never by the cluster's control-plane label: a real cluster's control-plane
+nodes are commonly tainted or out of reach, and the two decisions differ. A
+label only draws what asks for it; it keeps nothing away, and every node takes
+any other workload. The scripts set the labels (a node may not give itself a
+`node-role.kubernetes.io/` label):
 
-* the platform (`platform.sh` installs it with `deploy/lab/platform-values.yaml`):
-  every pod but the per-node agents (node-exporter), since its volumes stay on
-  the node they were created on and a laptop may sleep. The shared Kafka gets
-  it through the Kafka chart's `nodeSelector` (node affinity in Strimzi's pod
-  templates). The registry runs on its own node anyway (<<deployment-registry>>);
-* the server, by default: `up.sh --server-nodes loadgen` puts it on the load
-  generator nodes instead, `any` wherever the scheduler likes
-  (`server.placement.nodes`).
+* *platform* (one node; `nodes.sh platform <node>`, and `platform.sh` gives it
+  to the control-plane node on its first run): the platform, every pod of it
+  but the per-node agents (node-exporter), through
+  `deploy/lab/platform-values.yaml`; the shared Kafka through the Kafka
+  chart's `nodeSelector` (node affinity in Strimzi's pod templates). Its
+  volumes stay on the node they were created on, and a laptop may sleep. By
+  default also the server (`up.sh --server-nodes`: `loadgen` for the load
+  generator nodes, `any` for the scheduler's choice; `server.placement.nodes`)
+  and, on its first `up`, the registry, which then stays on its node
+  (<<deployment-registry>>).
+* *loadgen* (`nodes.sh loadgen <node>`, not the platform node): the load
+  generator, when a run asks for it (`placement.dedicatedNodes=true`,
+  `run.py --loadgen-nodes`). An earlier layout tainted these nodes;
+  `nodes.sh loadgen` removes that taint.
 
-An earlier layout tainted these nodes; `nodes.sh loadgen` removes that taint.
+Moving the platform label does not move the platform's data: Prometheus's and
+the shared Kafka's volumes stay on the old node, and `platform.sh` stops, naming
+them, until the label moves back or they are deleted with their data
+(<<tech-debt>>).
 
 [source,sh]
 ----
@@ -376,6 +387,7 @@ scp -r ~/lab-join-laptop laptop:             # a trusted channel: the bundle hol
 ssh -t laptop sudo ./lab-join-laptop/setup.sh [--node-ip <LAN address>] [--dns]
 #   registry trust and credentials first, then the k3s agent (cluster's version)
 deploy/lab/nodes.sh loadgen <node>   # label it as a load generator node
+deploy/lab/nodes.sh platform <node>  # make it the platform node (asks first: the data stays behind)
 deploy/lab/nodes.sh status           # nodes, roles, taints
 python3 -I tools/bench/run.py --target k8s --scenario smoke --loadgen-nodes
 deploy/lab/nodes.sh remove <node>    # drain and delete it; then k3s-agent-uninstall.sh on the node

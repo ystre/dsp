@@ -316,7 +316,7 @@
     "placement": {
       "type": "object",
       "properties": {
-        "nodes": { "enum": ["any", "control-plane", "loadgen"] }
+        "nodes": { "enum": ["any", "platform", "loadgen"] }
       },
       "additionalProperties": false
     },

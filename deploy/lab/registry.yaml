@@ -3,7 +3,7 @@
 #
 #   * Reachable from every machine of the lab as <REGISTRY_HOST>:<port> (IMAGE_REGISTRY,
 #     default oci-registry.internal.ystre.org:5000): host network on the registry node (the
-#     control-plane node unless moved: registry.sh move), bound to that node's address only
+#     platform node unless moved: registry.sh move), bound to that node's address only
 #     (not to loopback, not to container bridges). Pinned there, where its data (local-path
 #     volume) lives.
 #   * TLS only (1.3), with a certificate of the lab CA (registry.sh: name-constrained to the
