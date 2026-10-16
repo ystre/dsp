@@ -59,12 +59,7 @@ spec:
       type: strimziMetricsReporter
       values:
         allowList:
-          - "kafka_server_brokertopicmetrics.*"
-          - "kafka_network_requestmetrics.*"
-          - "kafka_network_socketserver.*"
-          - "kafka_server_replicamanager.*"
-          - "kafka_log_log.*"
-          - "kafka_controller.*"
+          {{- toYaml $k.metrics.allowList | nindent 10 }}
   entityOperator:
     topicOperator: {}
     {{- with $pod }}
@@ -100,6 +95,26 @@ spec:
     - port: tcp-prometheus
       path: /metrics
       interval: {{ $k.podMonitor.interval }}
+      relabelings:
+        {{- include "kafka.relabelings" . | nindent 8 }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $k.name }}-entity-operator
+  labels:
+    {{- include "kafka.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/name: {{ $k.name }}-entity-operator
+  podMetricsEndpoints:
+    # The topic operator (the only one enabled).
+    - port: healthcheck-to
+      path: /metrics
+      interval: {{ $k.podMonitor.interval }}
+      relabelings:
+        {{- include "kafka.relabelings" . | nindent 8 }}
 {{- if $k.kafkaExporter.enabled }}
 ---
 apiVersion: monitoring.coreos.com/v1
@@ -116,5 +131,7 @@ spec:
     - port: tcp-prometheus
       path: /metrics
       interval: {{ $k.podMonitor.interval }}
+      relabelings:
+        {{- include "kafka.relabelings" . | nindent 8 }}
 {{- end }}
 {{- end }}

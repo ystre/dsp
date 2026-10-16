@@ -1,0 +1,27 @@
+{{- /*
+The vendored third-party dashboards (dashboards/<folder>/*.json, from
+deploy/grafana/fetch-dashboards.sh): one ConfigMap each, labelled for the
+Grafana dashboard sidecar, in the Grafana folder that dashboards.folders names
+for <folder> (a folder mapped to "" is not installed).
+*/}}
+{{- if .Values.dashboards.enabled }}
+{{- range $path, $_ := .Files.Glob "dashboards/*/*.json" }}
+{{- $folder := get $.Values.dashboards.folders (base (dir $path)) }}
+{{- if $folder }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-dashboard-%s" $.Release.Name (base $path | trimSuffix ".json") | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "deps.labels" $ | nindent 4 }}
+    {{ $.Values.dashboards.label }}: {{ $.Values.dashboards.labelValue | quote }}
+  annotations:
+    grafana_folder: {{ $folder | quote }}
+data:
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

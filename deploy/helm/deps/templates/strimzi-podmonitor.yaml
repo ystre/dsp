@@ -1,0 +1,26 @@
+{{- /*
+The Strimzi cluster operator's own metrics (reconciliations, resources,
+certificate expiry; the "Strimzi Operators" dashboard). The topic operator is
+scraped by the Kafka chart, next to the cluster it serves.
+*/}}
+{{- $operator := index .Values "strimzi-kafka-operator" }}
+{{- if and $operator.enabled .Values.monitoring.strimziOperator.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: strimzi-cluster-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "deps.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/kind: cluster-operator
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.strimziOperator.interval }}
+{{- end }}

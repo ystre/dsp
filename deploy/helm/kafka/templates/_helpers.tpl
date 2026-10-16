@@ -56,3 +56,19 @@ topologySpreadConstraints:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Target labels of every PodMonitor, as in Strimzi's examples: the Strimzi
+dashboards filter on strimzi_io_cluster, strimzi_io_name and
+kubernetes_pod_name.
+*/}}
+{{- define "kafka.relabelings" -}}
+- action: labelmap
+  regex: __meta_kubernetes_pod_label_(strimzi_io_.+)
+- sourceLabels: [__meta_kubernetes_pod_name]
+  targetLabel: kubernetes_pod_name
+- sourceLabels: [__meta_kubernetes_pod_node_name]
+  targetLabel: node_name
+- sourceLabels: [__meta_kubernetes_pod_host_ip]
+  targetLabel: node_ip
+{{- end -}}

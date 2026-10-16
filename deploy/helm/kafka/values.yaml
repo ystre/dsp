@@ -23,6 +23,23 @@ resources:
 heap: 1g
 partitions: 12
 config: {}
+# Strimzi Metrics Reporter: the metric families exported (regular expressions
+# on the Prometheus names). Each family costs series per topic or partition on
+# a busy cluster; these are what the Strimzi Kafka and KRaft dashboards use
+# (the dependencies chart's dashboards/kafka).
+metrics:
+  allowList:
+    - "kafka_server_brokertopicmetrics.*"
+    - "kafka_network_requestmetrics.*"
+    - "kafka_network_socketserver.*"
+    - "kafka_server_replicamanager.*"
+    - "kafka_log_log.*"
+    - "kafka_controller.*"
+    - "kafka_cluster_partition.*"
+    - "kafka_server_kafkarequesthandlerpool.*"
+    - "kafka_server_kafkaserver.*"
+    - "kafka_server_socket_server_metrics.*"
+    - "kafka_server_raft.*"
 kafkaExporter:
   enabled: true
   topicRegex: ".*"

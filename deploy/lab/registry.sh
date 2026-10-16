@@ -292,7 +292,7 @@ check() {
     need_state
     local failed=0 ip resolved
     ip="$(registry_ip 2>/dev/null || true)"
-    resolved="$(getent ahostsv4 "${REGISTRY_HOST}" | awk 'NR == 1 { print $1 }')"
+    resolved="$(getent ahostsv4 "${REGISTRY_HOST}" | awk 'NR == 1 { print $1 }' || true)"
     if [[ -z "${resolved}" ]]; then
         echo "FAIL  ${REGISTRY_HOST} does not resolve (a DNS record, or setup.sh adds it to /etc/hosts)"; failed=1
     elif [[ -n "${ip}" && "${resolved}" != "${ip}" ]]; then

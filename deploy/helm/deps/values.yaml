@@ -15,6 +15,13 @@ kube-prometheus-stack:
   enabled: true
   alertmanager:
     enabled: false
+  # Linux nodes only: no AIX/macOS dashboards.
+  nodeExporter:
+    operatingSystems:
+      aix:
+        enabled: false
+      darwin:
+        enabled: false
   # k3s embeds these components; they cannot be scraped and would only show up as "down".
   kubeEtcd:
     enabled: false
@@ -31,6 +38,13 @@ kube-prometheus-stack:
       evaluationInterval: 15s
       retention: 2d
       retentionSize: 5GB
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi
       # Pick up PodMonitors/ServiceMonitors/rules from every namespace, regardless of Helm labels.
       serviceMonitorSelectorNilUsesHelmValues: false
       podMonitorSelectorNilUsesHelmValues: false
@@ -41,8 +55,12 @@ kube-prometheus-stack:
           memory: 1Gi
   prometheus-node-exporter:
     extraArgs:
-      # TCP/UDP counters used by the dashboard's "Node" row.
-      - --collector.netstat.fields=^(.*_(InErrors|InErrs|RcvbufErrors|SndbufErrors)|Tcp_(ActiveOpens|PassiveOpens|RetransSegs|CurrEstab)|TcpExt_(Listen.*|Syncookies.*|TCPTimeouts)|Udp(6)?_(InDatagrams|OutDatagrams|NoPorts))$
+      # The counters of the server dashboard's "Node" row and of Node Exporter Full.
+      - --collector.netstat.fields=^(.*_(InErrors|InErrs|RcvbufErrors|SndbufErrors)|Icmp6?_(InMsgs|OutMsgs)|Ip(6|Ext)_(InOctets|OutOctets)|Ip_Forwarding|Tcp_(ActiveOpens|PassiveOpens|RetransSegs|CurrEstab|InSegs|OutSegs|OutRsts|MaxConn)|TcpExt_(Listen.*|Syncookies.*|TCPTimeouts|TCPSynRetrans|TCPOFOQueue|TCPRcvQDrop)|Udp(6|Lite)?_(InDatagrams|OutDatagrams|NoPorts))$
+      # Off by default, cheap, and on Node Exporter Full: process/thread counts and limits,
+      # TCP connections per state.
+      - --collector.processes
+      - --collector.tcpstat
   grafana:
     adminUser: admin
     adminPassword: lab
@@ -81,3 +99,26 @@ strimzi-kafka-operator:
 # The shared cluster (deploy/helm/kafka; every option of its values.yaml).
 kafka:
   enabled: true
+
+# ------------------------------------------------------------------------------
+# Dashboards and monitors of the platform itself (besides those of
+# kube-prometheus-stack). Third-party dashboards are vendored, pinned, by
+# deploy/grafana/fetch-dashboards.sh into dashboards/<folder>/.
+# ------------------------------------------------------------------------------
+dashboards:
+  enabled: true
+  # Label the Grafana dashboard sidecar watches.
+  label: grafana_dashboard
+  labelValue: "1"
+  # dashboards/<folder> -> Grafana folder; "" leaves the folder's dashboards out.
+  folders:
+    # Strimzi: Kafka and KRaft (Metrics Reporter), Kafka exporter, operators.
+    kafka: Kafka
+    # Node Exporter Full (grafana.com 1860): every node-exporter metric, per node.
+    nodes: Nodes
+
+monitoring:
+  # PodMonitor of the Strimzi cluster operator (with strimzi-kafka-operator).
+  strimziOperator:
+    enabled: true
+    interval: 15s

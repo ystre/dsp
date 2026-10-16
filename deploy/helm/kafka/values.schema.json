@@ -19,6 +19,12 @@
     "heap": { "type": "string", "pattern": "^[0-9]+[kmgKMG]$" },
     "partitions": { "type": "integer", "minimum": 1 },
     "config": { "type": "object" },
+    "metrics": {
+      "type": "object",
+      "required": ["allowList"],
+      "properties": { "allowList": { "type": "array", "minItems": 1, "items": { "type": "string" } } },
+      "additionalProperties": false
+    },
     "kafkaExporter": { "type": "object" },
     "podMonitor": { "type": "object" },
     "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },

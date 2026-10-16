@@ -5,6 +5,32 @@
   "properties": {
     "kube-prometheus-stack": { "type": "object", "required": ["enabled"], "properties": { "enabled": { "type": "boolean" } } },
     "strimzi-kafka-operator": { "type": "object", "required": ["enabled"], "properties": { "enabled": { "type": "boolean" }, "watchAnyNamespace": { "type": "boolean" } } },
-    "kafka": { "type": "object", "required": ["enabled"], "properties": { "enabled": { "type": "boolean" } } }
+    "kafka": { "type": "object", "required": ["enabled"], "properties": { "enabled": { "type": "boolean" } } },
+    "dashboards": {
+      "type": "object",
+      "required": ["enabled", "label", "labelValue", "folders"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "label": { "type": "string", "minLength": 1 },
+        "labelValue": { "type": "string" },
+        "folders": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "strimziOperator": {
+          "type": "object",
+          "required": ["enabled", "interval"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m)$" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
   }
 }
