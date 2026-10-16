@@ -57,6 +57,16 @@ platform_node() {
     echo "${nodes}"
 }
 
+# warn_roleless_nodes: warns about nodes with neither lab role, e.g. a freshly joined
+# agent whose `nodes.sh loadgen` was forgotten: nothing asks for them by name.
+warn_roleless_nodes() {
+    local node
+    while read -r node; do
+        [[ -n "${node}" ]] && warn "node ${node} has no lab role yet: deploy/lab/nodes.sh loadgen ${node} (or nodes.sh platform ${node})"
+    done < <(kubectl get nodes --selector "!${PLATFORM_ROLE},!${LOADGEN_ROLE}" \
+                 --output 'jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}')
+}
+
 # node_ipv4 <node>: the node's internal IPv4 address (a dual-stack node lists an IPv6 one too).
 node_ipv4() {
     kubectl get node "$1" --output "jsonpath={.status.addresses[?(@.type=='InternalIP')].address}" \

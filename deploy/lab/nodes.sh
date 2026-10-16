@@ -116,6 +116,7 @@ status() {
     kubectl get nodes --label-columns "${PLATFORM_ROLE},${LOADGEN_ROLE}" --output wide
     echo
     kubectl get nodes --output 'custom-columns=NODE:.metadata.name,TAINTS:.spec.taints[*].key'
+    warn_roleless_nodes
 }
 
 remove() {

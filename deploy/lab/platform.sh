@@ -41,6 +41,7 @@ if [[ -z "${node}" ]]; then
 else
     echo "${node}"
 fi
+warn_roleless_nodes
 
 # Volumes of the platform elsewhere: their pods would wait for that node forever.
 hostname="$(kubectl get node "${node}" --output 'jsonpath={.metadata.labels.kubernetes\.io/hostname}')"

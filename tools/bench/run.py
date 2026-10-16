@@ -45,6 +45,8 @@ import scenarios  # noqa: E402
 import sysinfo  # noqa: E402
 
 EXIT_NOT_CLEAN, EXIT_SKIPPED = 2, 3
+# The lab's load generator node role (deploy/lab/nodes.sh; the loadgen chart's placement.dedicatedNodes).
+LOADGEN_ROLE = "node-role.kubernetes.io/loadgen"
 
 # Figures compared across runs (tools/bench/compare.py): name -> (direction, aggregate).
 # direction: +1 higher is better, -1 lower is better.
@@ -355,6 +357,12 @@ def main() -> int:
     if missing:
         log(f"SKIP {sc['name']}: the load generator lacks {', '.join(missing)}")
         return EXIT_SKIPPED
+
+    if args.target == "k8s" and args.loadgen_nodes \
+            and not kubectl("get", "nodes", "-l", f"{LOADGEN_ROLE}=true", "-o", "name").split():
+        # The job would stay Pending until its timeout.
+        raise RuntimeError(f"--loadgen-nodes: no node is labelled {LOADGEN_ROLE}=true "
+                           "(deploy/lab/nodes.sh loadgen <node>)")
 
     run_id = args.run_id or f"{sc['name']}-{args.target}-{time.strftime('%Y%m%d-%H%M%S')}"
     out = pathlib.Path(args.out) / run_id

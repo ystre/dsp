@@ -372,8 +372,11 @@ any other workload. The scripts set the labels (a node may not give itself a
   (<<deployment-registry>>).
 * *loadgen* (`nodes.sh loadgen <node>`, not the platform node): the load
   generator, when a run asks for it (`placement.dedicatedNodes=true`,
-  `run.py --loadgen-nodes`). An earlier layout tainted these nodes;
-  `nodes.sh loadgen` removes that taint.
+  `run.py --loadgen-nodes`, which stops if no node has the role). An earlier
+  layout tainted these nodes; `nodes.sh loadgen` removes that taint.
+
+A joined node gets no role by itself; `nodes.sh status` and `platform.sh` warn
+about nodes with neither role.
 
 Moving the platform label does not move the platform's data: Prometheus's and
 the shared Kafka's volumes stay on the old node, and `platform.sh` stops, naming
